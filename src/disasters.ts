@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import type { PhysicsSimulation } from "./physics";
 import type { Vec3 } from "./types";
+import {
+  MAX_INTENSITY,
+  intensityGain,
+  normalizeSettings,
+  type DisasterSettings,
+} from "./disaster-settings";
 
 export type DisasterId =
   | "meteor"
@@ -187,6 +193,7 @@ export const DISASTERS: DisasterInfo[] = [
 
 interface Effect {
   info: DisasterInfo;
+  settings: Readonly<DisasterSettings>;
   target: THREE.Vector3;
   intensity: number;
   age: number;
@@ -195,6 +202,9 @@ interface Effect {
   fired: boolean;
   seed: number;
   flashUntil?: number;
+  approach?: THREE.Vector3;
+  travelTime?: number;
+  strikes: number;
 }
 interface Particle {
   p: THREE.Vector3;
@@ -217,6 +227,11 @@ interface Projectile {
   heat: number;
 }
 const UP = new THREE.Vector3(0, 1, 0);
+const number = (e: Effect, key: string) => Number(e.settings[key]);
+const heading = (degrees: number) => {
+  const angle = THREE.MathUtils.degToRad(degrees);
+  return new THREE.Vector3(Math.sin(angle), 0, -Math.cos(angle));
+};
 
 /** Seeded effects and normalized game forces, deliberately not an engineering hazard model. */
 export class DisasterDirector {
@@ -266,20 +281,31 @@ export class DisasterDirector {
     this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0;
     return this.seed / 4294967296;
   }
-  launch(id: DisasterId, target: Vec3, intensity: number) {
+  launch(
+    id: DisasterId,
+    target: Vec3,
+    intensity: number,
+    settings?: Partial<DisasterSettings>,
+  ) {
     if (
       this.disposed ||
       this.effects.length >= 4 ||
       ![target.x, target.y, target.z, intensity].every(Number.isFinite)
     )
       return false;
-    const info = DISASTERS.find((d) => d.id === id);
-    if (!info) return false;
-    intensity = THREE.MathUtils.clamp(intensity, 1, 5);
+    const preset = DISASTERS.find((d) => d.id === id);
+    if (!preset) return false;
+    const snapshot = Object.freeze({ ...normalizeSettings(id, settings) });
+    const info = {
+      ...preset,
+      duration: Number(snapshot.duration ?? preset.duration),
+    };
+    intensity = THREE.MathUtils.clamp(intensity, 1, MAX_INTENSITY);
     const group = new THREE.Group();
     this.scene.add(group);
     const effect: Effect = {
       info,
+      settings: snapshot,
       target: new THREE.Vector3(target.x, target.y, target.z),
       intensity,
       age: 0,
@@ -287,6 +313,7 @@ export class DisasterDirector {
       group,
       fired: false,
       seed: this.random(),
+      strikes: 0,
     };
     this.effects.push(effect);
     this.setup(effect);
@@ -305,17 +332,45 @@ export class DisasterDirector {
       }),
     );
   }
+  private approach(e: Effect, height: number) {
+    const angle = THREE.MathUtils.degToRad(number(e, "angle"));
+    const distance = height / Math.tan(angle);
+    e.approach = heading(number(e, "direction"))
+      .multiplyScalar(-distance)
+      .addScaledVector(UP, height);
+    e.travelTime = Math.max(0.12, e.approach.length() / number(e, "speed"));
+    e.info.duration = Math.max(e.info.duration, e.travelTime + 4);
+    e.group.position.copy(e.target).add(e.approach);
+  }
   private setup(e: Effect) {
     const id = e.info.id;
+    const gain = intensityGain(e.intensity);
+    if (id === "lightning")
+      e.info.duration = Math.max(
+        e.info.duration,
+        (Math.round(number(e, "strikes")) - 1) * number(e, "interval") + 1,
+      );
     if (id === "meteor" || id === "volcano" || id === "hail") {
       if (id === "meteor") {
-        e.group.add(
-          this.mesh(
-            new THREE.IcosahedronGeometry(1.5 + e.intensity * 0.5, 1),
-            0x574237,
+        const color =
+          e.settings.composition === "ice"
+            ? 0xa0d9e8
+            : e.settings.composition === "iron"
+              ? 0x4e555e
+              : 0x574237;
+        const stone = this.mesh(
+          new THREE.IcosahedronGeometry(
+            number(e, "diameter") * 0.5 * gain ** 0.12,
+            1,
           ),
+          color,
         );
-        e.group.position.copy(e.target).add(new THREE.Vector3(-65, 95, -42));
+        stone.material.metalness =
+          e.settings.composition === "iron" ? 0.85 : 0.08;
+        stone.material.roughness =
+          e.settings.composition === "ice" ? 0.16 : 0.7;
+        e.group.add(stone);
+        this.approach(e, 95);
       }
       if (id === "volcano") {
         const cone = this.mesh(
@@ -335,15 +390,33 @@ export class DisasterDirector {
       }
     }
     if (id === "plane") {
-      e.group.position.copy(e.target).add(new THREE.Vector3(75, 32, 75));
-      e.group.rotation.set(-0.2, Math.PI / 4, -0.3);
+      this.approach(e, 32);
+      e.group.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, -1),
+        e.approach!.clone().negate().normalize(),
+      );
+      const cargo = e.settings.aircraft === "cargo",
+        glider = e.settings.aircraft === "glider";
+      const color = cargo ? 0x809497 : glider ? 0xebdcad : 0xe9e6da;
       const body = this.mesh(
-        new THREE.CylinderGeometry(0.9, 0.55, 11, 10),
-        0xe9e6da,
+        new THREE.CylinderGeometry(
+          cargo ? 1.4 : glider ? 0.38 : 0.9,
+          0.55,
+          cargo ? 15 : 11,
+          10,
+        ),
+        color,
       );
       body.rotation.x = Math.PI / 2;
       e.group.add(body);
-      const wing = this.mesh(new THREE.BoxGeometry(13, 0.2, 2.4), 0xe9e6da);
+      const wing = this.mesh(
+        new THREE.BoxGeometry(
+          glider ? 20 : cargo ? 18 : 13,
+          0.2,
+          cargo ? 3.8 : 2.4,
+        ),
+        color,
+      );
       e.group.add(wing);
       const tail = this.mesh(new THREE.BoxGeometry(4, 0.2, 1.5), 0xf19760);
       tail.position.z = 4;
@@ -351,20 +424,28 @@ export class DisasterDirector {
       const fin = this.mesh(new THREE.BoxGeometry(0.15, 2, 1.8), 0xf19760);
       fin.position.set(0, 1, 4);
       e.group.add(fin);
+      e.group.scale.setScalar(number(e, "size") * gain ** 0.08);
     }
     if (id === "blackhole" || id === "gravity") {
-      e.group.position
-        .copy(e.target)
-        .addScaledVector(UP, id === "gravity" ? 37 : 15);
+      e.group.position.copy(e.target).addScaledVector(UP, number(e, "height"));
       const ball = this.mesh(
-        new THREE.SphereGeometry(3.3, 32, 24),
+        new THREE.SphereGeometry(
+          id === "blackhole" ? number(e, "size") : 3.3,
+          32,
+          24,
+        ),
         id === "blackhole" ? 0x030308 : 0xbbb0ff,
         id !== "blackhole",
       );
       e.group.add(ball);
       for (let i = 0; i < 3; i++) {
         const ring = this.mesh(
-          new THREE.TorusGeometry(5 + i * 1.2, 0.12 + 0.15 * i, 8, 64),
+          new THREE.TorusGeometry(
+            (5 + i * 1.2) * (id === "blackhole" ? number(e, "size") / 3.3 : 1),
+            0.12 + 0.15 * i,
+            8,
+            64,
+          ),
           0xb898f5,
           true,
         );
@@ -373,25 +454,37 @@ export class DisasterDirector {
       }
     }
     if (id === "aliens") {
-      e.group.position.copy(e.target).addScaledVector(UP, 32);
-      const saucer = this.mesh(new THREE.SphereGeometry(8, 24, 12), 0x858e91);
-      saucer.scale.y = 0.23;
-      e.group.add(saucer);
-      const cockpit = this.mesh(
-        new THREE.SphereGeometry(3.5, 20, 12),
-        0x9bdabb,
-        true,
-      );
-      cockpit.position.y = 1;
-      e.group.add(cockpit);
-      const ring = this.mesh(
-        new THREE.TorusGeometry(6, 0.16, 8, 40),
-        0xaaffae,
-        true,
-      );
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = -1;
-      e.group.add(ring);
+      e.group.position.copy(e.target).addScaledVector(UP, number(e, "height"));
+      for (let i = 0; i < Math.round(number(e, "craftCount")); i++) {
+        const craft = new THREE.Group();
+        if (number(e, "craftCount") > 1) {
+          const a = (i / number(e, "craftCount")) * Math.PI * 2;
+          craft.position.set(
+            Math.cos(a) * 14,
+            Math.sin(a) * 3,
+            Math.sin(a) * 14,
+          );
+        }
+        const saucer = this.mesh(new THREE.SphereGeometry(8, 24, 12), 0x858e91);
+        saucer.scale.y = 0.23;
+        craft.add(saucer);
+        const cockpit = this.mesh(
+          new THREE.SphereGeometry(3.5, 20, 12),
+          0x9bdabb,
+          true,
+        );
+        cockpit.position.y = 1;
+        craft.add(cockpit);
+        const ring = this.mesh(
+          new THREE.TorusGeometry(6, 0.16, 8, 40),
+          0xaaffae,
+          true,
+        );
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = -1;
+        craft.add(ring);
+        e.group.add(craft);
+      }
     }
     if (id === "tornado") {
       e.group.position.copy(e.target).add(new THREE.Vector3(0, 0, 6));
@@ -408,6 +501,17 @@ export class DisasterDirector {
         ring.position.y = i * 1.8;
         e.group.add(ring);
       }
+      e.group.scale.set(
+        (number(e, "radius") / 70) * gain ** 0.3,
+        Math.max(0.4, number(e, "lift") ** 0.3),
+        (number(e, "radius") / 70) * gain ** 0.3,
+      );
+    }
+    if (id === "hail") {
+      // Start the first stone at t=0, so even a short, high-altitude storm reaches the ground
+      // within its chosen lifetime at both fast and slow rendering frame rates.
+      this.hailstone(e);
+      e.next = 1 / number(e, "rate");
     }
   }
   private burst(
@@ -437,11 +541,60 @@ export class DisasterDirector {
       });
     }
   }
-  private impact(e: Effect, p: THREE.Vector3, radius: number, power: number) {
-    this.sim.blast(p, radius, power);
-    this.burst(p, 65, 0xc3b298, 13 + e.intensity * 3, 3, 9, 0.6);
-    this.burst(p, 35, e.info.color, 16, 1.3, 1, 0.55);
-    this.onImpact(e.intensity * 0.28);
+  private impact(
+    e: Effect,
+    p: THREE.Vector3,
+    radius: number,
+    power: number,
+    debris = 1,
+    direction?: THREE.Vector3,
+  ) {
+    const gain = intensityGain(e.intensity);
+    const reach = radius * gain ** 0.8;
+    this.sim.blast(p, reach, power * gain ** 1.4, {
+      impulseScale: debris,
+      lift: Math.min(2, 1 + (gain - 1) * 0.05),
+      direction,
+    });
+    this.burst(
+      p,
+      Math.min(250, 65 * Math.sqrt(gain) * debris),
+      0xc3b298,
+      (13 + Math.min(e.intensity, 5) * 3) * Math.sqrt(gain) * debris,
+      3 + Math.log(gain),
+      9,
+      0.6,
+    );
+    this.burst(
+      p,
+      35 * Math.sqrt(gain),
+      e.info.color,
+      16 * Math.sqrt(gain),
+      1.3,
+      1,
+      0.55,
+    );
+    if (gain > 1) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1, 0.028, 5, 64),
+        new THREE.MeshBasicMaterial({
+          color: e.info.color,
+          transparent: true,
+          opacity: 0.55,
+        }),
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.copy(p);
+      const group = new THREE.Group();
+      group.add(ring);
+      this.scene.add(group);
+      this.transients.push({
+        group,
+        life: 0.8,
+        shock: { mesh: ring, radius: reach, duration: 0.8 },
+      });
+    }
+    this.onImpact(Math.min(3.5, e.intensity * 0.28));
   }
   private surfaceAt(x: number, z: number) {
     this.surfaceRay.set(
@@ -461,12 +614,17 @@ export class DisasterDirector {
     radius: number,
     power: number,
     heat: number,
+    size = heat > 0 ? 0.65 : 0.3,
   ) {
+    if (this.projectiles.length >= 128 || e.age + duration >= e.info.duration)
+      return;
     const mesh = this.mesh(
-      new THREE.IcosahedronGeometry(heat > 0 ? 0.65 : 0.3, 0),
+      new THREE.IcosahedronGeometry(size, 0),
       heat > 0 ? 0xff773e : 0xd2e9ef,
       heat > 0,
     );
+    mesh.material.emissiveIntensity =
+      heat > 0 ? Math.min(3, 0.5 + heat / 25) : 0;
     mesh.position.copy(start);
     e.group.add(mesh);
     this.projectiles.push({
@@ -481,45 +639,124 @@ export class DisasterDirector {
       heat,
     });
   }
+  private hailstone(e: Effect) {
+    const p = e.target,
+      s = Math.min(e.intensity, 5),
+      gain = intensityGain(e.intensity);
+    const hit = this.surfaceAt(
+      p.x + (this.random() - 0.5) * number(e, "spread"),
+      p.z + ((this.random() - 0.5) * number(e, "spread") * 38) / 65,
+    );
+    const size = number(e, "diameter") / 0.6;
+    this.projectile(
+      e,
+      hit.clone().addScaledVector(UP, number(e, "height")),
+      hit,
+      Math.sqrt((2 * number(e, "height")) / 9.81),
+      (2 + s * 0.5) * size ** 0.7,
+      ((3 + s * 2) * size ** 1.5 * number(e, "height")) / 30,
+      0,
+      number(e, "diameter") * 0.5 * gain ** 0.1,
+    );
+  }
   update(dt: number) {
     if (this.disposed || !Number.isFinite(dt) || dt <= 0) return;
     // Match the physics clock's maximum accepted frame delta; pause is controlled by the caller.
     dt = Math.min(dt, 0.1);
-    let waterHeight = -5,
-      waterFlow = 0;
+    let waterHeight = -5;
     const waterLayers: Array<(point: Vec3) => number> = [];
     this.waterPhase += dt;
     for (const e of this.effects) {
       e.age = Math.min(e.info.duration, e.age + dt);
       const { id } = e.info,
         t = e.age,
-        s = e.intensity,
+        s = Math.min(e.intensity, 5),
+        gain = intensityGain(e.intensity),
         p = e.target;
       if (id === "meteor") {
-        if (t < 2.7) {
-          const k = 1 - t / 2.7;
-          e.group.position.set(p.x - 65 * k, p.y + 95 * k, p.z - 42 * k);
+        const size = number(e, "diameter") / 6;
+        const speed = number(e, "speed") / 45;
+        const density =
+          e.settings.composition === "iron"
+            ? 2.5
+            : e.settings.composition === "ice"
+              ? 0.32
+              : 1;
+        if (t < e.travelTime!) {
+          const k = 1 - t / e.travelTime!;
+          e.group.position.copy(p).addScaledVector(e.approach!, k);
           e.group.rotation.x += dt * 1.6;
-          this.burst(e.group.position, 3, 0xffaa58, 1.5, 0.6, -2, 0.8);
+          this.burst(
+            e.group.position,
+            Math.min(16, 3 * Math.sqrt(size * gain)),
+            e.settings.composition === "ice" ? 0xacf4ff : 0xffaa58,
+            1.5 * speed,
+            0.6,
+            -2,
+            0.8 * size,
+          );
         } else if (!e.fired) {
           e.fired = true;
           e.group.visible = false;
-          this.impact(e, p, 13 + s * 3, 100 + s * 48);
-          this.sim.heat(p, 12 + s * 2, 25);
+          this.impact(
+            e,
+            p,
+            (13 + s * 3) * size ** 0.72 * speed ** 0.35 * density ** 0.2,
+            (100 + s * 48) * size ** 1.5 * speed * density ** 0.55,
+            number(e, "debris"),
+            heading(number(e, "direction"))
+              .multiplyScalar(
+                Math.cos(THREE.MathUtils.degToRad(number(e, "angle"))),
+              )
+              .addScaledVector(
+                UP,
+                -Math.sin(THREE.MathUtils.degToRad(number(e, "angle"))),
+              ),
+          );
+          this.sim.heat(
+            p,
+            (12 + s * 2) * size ** 0.65 * gain ** 0.4,
+            25 *
+              speed *
+              gain *
+              (e.settings.composition === "ice" ? 0.1 : density ** 0.25),
+          );
           this.onEvent("운석 충돌 · 충격파 전파");
         }
       }
       if (id === "explosion" && !e.fired) {
         e.fired = true;
-        this.impact(e, p, 10 + s * 3.5, 75 + s * 35);
+        const direction =
+          e.settings.pattern === "upward"
+            ? UP
+            : e.settings.pattern === "directional"
+              ? heading(number(e, "direction"))
+              : undefined;
+        this.impact(
+          e,
+          p,
+          (number(e, "radius") * (10 + s * 3.5)) / 20.5,
+          75 + s * 35,
+          number(e, "debris"),
+          direction,
+        );
+        if (number(e, "heat") > 0)
+          this.sim.heat(
+            p,
+            number(e, "radius") * gain ** 0.5,
+            number(e, "heat") * 35 * gain,
+          );
         this.onEvent("폭발 · 파편 충돌 진행");
       }
       if (id === "earthquake") {
-        const envelope = Math.sin(Math.min(t / 16, 1) * Math.PI);
-        this.sim.earthquake(dt, s * envelope);
+        const envelope = Math.sin(Math.min(t / e.info.duration, 1) * Math.PI);
+        this.sim.earthquake(dt, s * envelope * gain, {
+          frequency: number(e, "frequency"),
+          direction: number(e, "direction"),
+        });
         if (t > e.next) {
           e.next = t + 0.2;
-          this.onImpact(0.08 * s * envelope);
+          this.onImpact(Math.min(2.5, 0.08 * s * envelope * Math.sqrt(gain)));
           if (this.random() > 0.6)
             this.burst(
               {
@@ -537,24 +774,35 @@ export class DisasterDirector {
         }
       }
       if (id === "fire") {
-        this.sim.heat(p, 6 + s * 2 + t * 0.17, dt * (13 + s * 7));
+        const wind = heading(number(e, "direction")).multiplyScalar(
+          number(e, "wind"),
+        );
+        const center = p.clone().addScaledVector(wind, t * 0.35);
+        const radius =
+          ((number(e, "radius") * (6 + s * 2)) / 12 + t * number(e, "spread")) *
+          gain ** 0.65;
+        this.sim.heat(
+          center,
+          radius,
+          dt * (13 + s * 7) * number(e, "heat") * gain,
+        );
         if (t > e.next) {
           e.next = t + 0.085;
           this.burst(
             {
-              x: p.x + (this.random() - 0.5) * 6,
-              y: p.y + 1,
-              z: p.z + (this.random() - 0.5) * 6,
+              x: center.x + (this.random() - 0.5) * radius,
+              y: center.y + 1,
+              z: center.z + (this.random() - 0.5) * radius,
             },
-            7,
+            Math.min(30, 7 * Math.sqrt(gain * number(e, "heat"))),
             0xff8b38,
-            2.3,
+            2.3 * Math.sqrt(number(e, "heat")),
             1.6,
             -3,
             0.5,
           );
           this.burst(
-            { x: p.x, y: p.y + 4, z: p.z },
+            { x: center.x + wind.x, y: center.y + 4, z: center.z + wind.z },
             3,
             0x55585b,
             2,
@@ -565,17 +813,27 @@ export class DisasterDirector {
         }
       }
       if (id === "lightning") {
-        if (t > e.next && t < 3.6) {
-          e.next = t + 1.15;
+        if (t >= e.next && e.strikes < Math.round(number(e, "strikes"))) {
+          e.next += number(e, "interval");
+          e.strikes++;
+          const hit = p
+            .clone()
+            .add(
+              new THREE.Vector3(
+                (this.random() - 0.5) * number(e, "spread"),
+                0,
+                (this.random() - 0.5) * number(e, "spread"),
+              ),
+            );
           e.flashUntil = t + 0.18;
           for (const child of [...e.group.children]) this.remove(child);
           const points = [];
           for (let i = 0; i < 12; i++)
             points.push(
               new THREE.Vector3(
-                p.x + (i === 11 ? 0 : (this.random() - 0.5) * 7),
-                p.y + 66 - i * 6,
-                p.z + (i === 11 ? 0 : (this.random() - 0.5) * 4),
+                hit.x + (i === 11 ? 0 : (this.random() - 0.5) * 7),
+                hit.y + 66 - i * 6,
+                hit.z + (i === 11 ? 0 : (this.random() - 0.5) * 4),
               ),
             );
           const bolt = new THREE.Line(
@@ -583,151 +841,274 @@ export class DisasterDirector {
             new THREE.LineBasicMaterial({ color: 0xeff3ff }),
           );
           e.group.add(bolt);
-          this.sim.heat(p, 3 + s, 17 + s * 6);
-          this.sim.blast(p, 2 + s * 0.6, 6 + s * 2);
-          this.burst(p, 15, 0xffffcc, 4, 0.5, 2, 0.2);
+          this.sim.heat(
+            hit,
+            (3 + s) * gain ** 0.65,
+            (17 + s * 6) * number(e, "heat") * gain,
+          );
+          this.sim.blast(
+            hit,
+            (2 + s * 0.6) * gain ** 0.65,
+            (6 + s * 2) * gain ** 1.2,
+          );
+          this.burst(
+            hit,
+            15 * Math.sqrt(gain),
+            0xffffcc,
+            4 * Math.sqrt(number(e, "heat") * gain),
+            0.5,
+            2,
+            0.2,
+          );
           this.onImpact(0.17);
         }
         e.group.visible = t < (e.flashUntil ?? 0);
       }
       if (id === "flood" || id === "tsunami") {
+        const flowDirection = heading(number(e, "direction"));
+        const tail = Math.max(
+          0,
+          Math.min((e.info.duration - t) / (id === "flood" ? 5 : 3), 1),
+        );
         const height =
           id === "flood"
-            ? Math.min(t / 9, 1) * (1.2 + s * 1.25) * Math.min((28 - t) / 5, 1)
-            : (3 + s * 1.8) * Math.min(t / 2, 1, (22 - t) / 3);
-        const crestZ = p.z + 110 - t * 10;
-        waterLayers.push(
+            ? ((Math.min(t / number(e, "riseTime"), 1) *
+                number(e, "height") *
+                (1.2 + s * 1.25)) /
+                4.95) *
+              tail *
+              gain ** 0.42
+            : ((number(e, "height") * (3 + s * 1.8)) / 8.4) *
+              Math.min(t / 2, 1) *
+              tail *
+              gain ** 0.42;
+        const speed = id === "tsunami" ? number(e, "speed") : number(e, "flow");
+        // Each wave keeps its own direction, speed and surface when several disasters coexist.
+        const crest = p
+          .clone()
+          .addScaledVector(
+            flowDirection,
+            -Math.min(110, speed * e.info.duration * 0.5) + t * speed,
+          );
+        const surface =
           id === "flood"
             ? () => height
-            : (point) =>
-                height * Math.exp(-(((point.z - crestZ) / 16) ** 2)) - 0.15,
-        );
+            : (point: Vec3) => {
+                const distance =
+                  (point.x - crest.x) * flowDirection.x +
+                  (point.z - crest.z) * flowDirection.z;
+                return (
+                  height * Math.exp(-((distance / number(e, "width")) ** 2)) -
+                  0.15
+                );
+              };
+        waterLayers.push(surface);
         waterHeight = Math.max(waterHeight, height);
-        waterFlow = Math.max(
-          waterFlow,
-          id === "tsunami" ? 6 + s * 2 : 1 + s * 0.6,
-        );
+        const flow =
+          speed *
+          (id === "tsunami" ? (6 + s * 2) / 10 : (1 + s * 0.6) / 2.8) *
+          gain ** 0.45;
+        if (height > 0)
+          this.sim.water(
+            height,
+            flowDirection.clone().multiplyScalar(flow),
+            dt,
+            surface,
+          );
       }
-      if (id === "volcano" && t > e.next && t < e.info.duration - 4.4) {
-        e.next = t + 0.65;
-        const hit = this.surfaceAt(
-          p.x + (this.random() - 0.5) * 44,
-          p.z + (this.random() - 0.5) * 24,
-        );
-        this.projectile(
-          e,
-          new THREE.Vector3(p.x - 55, 27, -65),
-          hit,
-          4.4,
-          3 + s,
-          12 + s * 3,
-          9 + s * 2,
-        );
+      if (id === "volcano" && t < e.info.duration - 4.4) {
+        while (t >= e.next) {
+          e.next += 1 / number(e, "rate");
+          const hit = this.surfaceAt(
+            p.x + (this.random() - 0.5) * number(e, "spread"),
+            p.z + ((this.random() - 0.5) * number(e, "spread") * 24) / 44,
+          );
+          const size = number(e, "diameter") / 1.3;
+          this.projectile(
+            e,
+            new THREE.Vector3(p.x - 55, 27, -65),
+            hit,
+            4.4,
+            (3 + s) * size ** 0.7,
+            (12 + s * 3) * size ** 1.5,
+            (9 + s * 2) * number(e, "heat") * gain,
+            number(e, "diameter") * 0.5 * gain ** 0.12,
+          );
+        }
       }
-      if (id === "hail" && t > e.next && t < e.info.duration - 2.5) {
-        e.next = t + 0.15;
-        const hit = this.surfaceAt(
-          p.x + (this.random() - 0.5) * 65,
-          p.z + (this.random() - 0.5) * 38,
-        );
-        this.projectile(
-          e,
-          hit.clone().addScaledVector(UP, 30),
-          hit,
-          Math.sqrt(60 / 9.81),
-          2 + s * 0.5,
-          3 + s * 2,
-          0,
-        );
+      if (id === "hail") {
+        const travel = Math.sqrt((2 * number(e, "height")) / 9.81);
+        while (t >= e.next && t < e.info.duration - travel) {
+          e.next += 1 / number(e, "rate");
+          this.hailstone(e);
+        }
       }
       if (id === "plane") {
-        if (t < 3) {
-          const k = 1 - t / 3;
-          e.group.position.set(p.x + 75 * k, p.y + 32 * k, p.z + 75 * k);
-          e.group.rotation.set(-0.2, Math.PI / 4, -0.3);
+        if (t < e.travelTime!) {
+          const k = 1 - t / e.travelTime!;
+          e.group.position.copy(p).addScaledVector(e.approach!, k);
         } else if (!e.fired) {
           e.fired = true;
           e.group.visible = false;
-          this.impact(e, p, 13 + s * 2, 90 + s * 30);
-          const forward = p.clone().add(new THREE.Vector3(-9, 0, -9));
-          this.impact(e, forward, 8 + s, 40 + s * 12);
-        } else {
-          this.sim.heat(p, 8 + s, dt * 15);
+          const mass =
+            e.settings.aircraft === "cargo"
+              ? 2.2
+              : e.settings.aircraft === "glider"
+                ? 0.25
+                : 1;
+          const size = number(e, "size"),
+            speed = number(e, "speed") / 37;
+          const direction = heading(number(e, "direction"));
+          const spread = size ** 0.7 * speed ** 0.35 * mass ** 0.2;
+          const power = size ** 1.5 * speed * mass ** 0.55;
+          this.impact(
+            e,
+            p,
+            (13 + s * 2) * spread,
+            (90 + s * 30) * power,
+            1,
+            direction,
+          );
+          const forward = p
+            .clone()
+            .addScaledVector(
+              direction,
+              12.7 * Math.cos(THREE.MathUtils.degToRad(number(e, "angle"))),
+            );
+          this.impact(
+            e,
+            forward,
+            (8 + s) * spread,
+            (40 + s * 12) * power,
+            1,
+            direction,
+          );
+        } else if (number(e, "fuel") > 0) {
+          this.sim.heat(
+            p,
+            (8 + s) * number(e, "size") * gain ** 0.5,
+            dt * 15 * number(e, "fuel") * gain,
+          );
           if (t > e.next) {
             e.next = t + 0.15;
-            this.burst(p, 5, 0xff944c, 3, 2, -3, 0.7);
+            this.burst(
+              p,
+              5 * Math.sqrt(number(e, "fuel") * gain),
+              0xff944c,
+              3 * number(e, "size"),
+              2,
+              -3,
+              0.7,
+            );
           }
         }
       }
       if (id === "blackhole" || id === "gravity") {
-        const center = p
-          .clone()
-          .addScaledVector(UP, id === "blackhole" ? 15 : 37);
-        e.group.rotation.y += dt * 0.5;
+        const center = p.clone().addScaledVector(UP, number(e, "height"));
+        e.group.rotation.y += dt * 0.5 * number(e, "spin");
         e.group.scale.setScalar(
           Math.min(t, 1, Math.max((e.info.duration - t) / 2, 0)),
         );
-        if (t < e.info.duration - 4)
-          this.sim.vortex(center, s * (id === "gravity" ? 0.65 : 1.2), dt);
+        const release =
+          id === "gravity"
+            ? Math.min(number(e, "release"), e.info.duration - 1)
+            : Math.min(4, e.info.duration * 0.2);
+        if (t < e.info.duration - release)
+          this.sim.vortex(
+            center,
+            s *
+              (id === "gravity"
+                ? 0.65 * number(e, "lift")
+                : 1.2 * number(e, "pull")) *
+              gain,
+            dt,
+            {
+              radius: number(e, "radius") * gain ** 0.35,
+              spin: number(e, "spin"),
+              lift: 1,
+            },
+          );
         if (t > e.next) {
           e.next = t + 0.12;
           this.burst(center, 2, 0xb9a2ef, 1, 0.9, -1, 0.2);
         }
       }
       if (id === "aliens") {
-        e.group.position.x = p.x + Math.sin(t * 0.6) * 10;
+        e.group.position.x =
+          p.x +
+          Math.sin(t * 0.6) * Math.min(35, (number(e, "spread") * 10) / 28);
         e.group.rotation.y += dt * 0.4;
         if (t > e.next) {
-          e.next = t + 1.3;
-          const hit = p
-            .clone()
-            .add(
-              new THREE.Vector3(
-                (this.random() - 0.5) * 28,
-                0,
-                (this.random() - 0.5) * 20,
-              ),
+          e.next = t + number(e, "interval");
+          for (const craft of e.group.children) {
+            const hit = p
+              .clone()
+              .add(
+                new THREE.Vector3(
+                  (this.random() - 0.5) * number(e, "spread"),
+                  0,
+                  ((this.random() - 0.5) * number(e, "spread") * 20) / 28,
+                ),
+              );
+            this.impact(
+              e,
+              hit,
+              (4 + s * 1.4) * Math.sqrt(number(e, "beam")),
+              (15 + s * 5) * number(e, "beam"),
             );
-          this.impact(e, hit, 4 + s * 1.4, 15 + s * 5);
-          this.sim.heat(hit, 5 + s, 15);
-          const source = e.group.position.clone().addScaledVector(UP, -2),
-            direction = source.clone().sub(hit);
-          const beam = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.22, 0.8, direction.length(), 8),
-            new THREE.MeshBasicMaterial({
-              color: 0xaaffbf,
-              transparent: true,
-              opacity: 0.65,
-            }),
-          );
-          beam.position.copy(source).add(hit).multiplyScalar(0.5);
-          beam.quaternion.setFromUnitVectors(UP, direction.normalize());
-          // A short beam is owned by a short effect so pause/reset uses simulation time.
-          const beamGroup = new THREE.Group();
-          beamGroup.add(beam);
-          this.scene.add(beamGroup);
-          this.transients.push({ group: beamGroup, life: 0.24 });
+            this.sim.heat(
+              hit,
+              (5 + s) * Math.sqrt(number(e, "beam")) * gain ** 0.4,
+              15 * number(e, "beam") * gain,
+            );
+            const source = craft
+                .getWorldPosition(new THREE.Vector3())
+                .addScaledVector(UP, -2),
+              direction = source.clone().sub(hit);
+            const beam = new THREE.Mesh(
+              new THREE.CylinderGeometry(
+                0.22 * number(e, "beam"),
+                0.8 * number(e, "beam"),
+                direction.length(),
+                8,
+              ),
+              new THREE.MeshBasicMaterial({
+                color: 0xaaffbf,
+                transparent: true,
+                opacity: 0.65,
+              }),
+            );
+            beam.position.copy(source).add(hit).multiplyScalar(0.5);
+            beam.quaternion.setFromUnitVectors(UP, direction.normalize());
+            // A short beam is owned by a short effect so pause/reset uses simulation time.
+            const beamGroup = new THREE.Group();
+            beamGroup.add(beam);
+            this.scene.add(beamGroup);
+            this.transients.push({ group: beamGroup, life: 0.24 });
+          }
         }
       }
       if (id === "tornado") {
         e.group.position
           .copy(p)
-          .add(
-            new THREE.Vector3(
-              Math.sin(t * 0.22) * 12,
-              0,
-              Math.cos(t * 0.22) * 6,
-            ),
+          .addScaledVector(
+            heading(number(e, "direction")),
+            Math.sin(t * 0.22) * number(e, "travel") * 0.5,
           );
-        e.group.rotation.y = t * 4;
+        e.group.rotation.y = t * 4 * number(e, "spin");
         for (let i = 0; i < e.group.children.length; i++) {
           e.group.children[i].position.x = Math.sin(t * 3 + i * 0.3) * i * 0.12;
           e.group.children[i].position.z = Math.cos(t * 3 + i * 0.2) * i * 0.12;
         }
         this.sim.vortex(
           e.group.position.clone().addScaledVector(UP, 15),
-          s * 0.7,
+          s * 0.7 * gain,
           dt,
+          {
+            radius: number(e, "radius") * gain ** 0.35,
+            spin: number(e, "spin"),
+            lift: number(e, "lift"),
+          },
         );
       }
     }
@@ -744,8 +1125,21 @@ export class DisasterDirector {
           this.impact(shot.effect, shot.hit, shot.radius, shot.power);
           this.sim.heat(shot.hit, shot.radius + 2, shot.heat);
         } else {
-          this.sim.blast(shot.hit, shot.radius, shot.power);
-          this.burst(shot.hit, 5, 0xd2e9ef, 2, 0.6, 9.81, 0.18);
+          const gain = intensityGain(shot.effect.intensity);
+          this.sim.blast(
+            shot.hit,
+            shot.radius * gain ** 0.65,
+            shot.power * gain ** 1.4,
+          );
+          this.burst(
+            shot.hit,
+            5 * Math.sqrt(gain),
+            0xd2e9ef,
+            2 * Math.sqrt(gain),
+            0.6,
+            9.81,
+            number(shot.effect, "diameter") * 0.3,
+          );
         }
         this.remove(shot.mesh);
         this.projectiles.splice(i, 1);
@@ -755,12 +1149,6 @@ export class DisasterDirector {
     if (waterHeight > 0) {
       const surface = (point: Vec3) =>
         Math.max(...waterLayers.map((layer) => layer(point)));
-      this.sim.water(
-        waterHeight,
-        { x: waterFlow * 0.3, y: 0, z: -waterFlow },
-        dt,
-        surface,
-      );
       const pos = this.waterMesh.geometry.attributes.position;
       for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i),
@@ -785,6 +1173,16 @@ export class DisasterDirector {
     for (let i = this.transients.length - 1; i >= 0; i--) {
       const v = this.transients[i];
       v.life -= dt;
+      if (v.shock) {
+        const phase = THREE.MathUtils.clamp(
+          1 - v.life / v.shock.duration,
+          0,
+          1,
+        );
+        v.shock.mesh.scale.setScalar(Math.max(0.01, v.shock.radius * phase));
+        (v.shock.mesh.material as THREE.MeshBasicMaterial).opacity =
+          (1 - phase) * 0.55;
+      }
       if (v.life <= 0) {
         this.remove(v.group);
         this.transients.splice(i, 1);
@@ -817,7 +1215,11 @@ export class DisasterDirector {
     if (this.particleMesh.instanceColor)
       this.particleMesh.instanceColor.needsUpdate = true;
   }
-  private transients: { group: THREE.Group; life: number }[] = [];
+  private transients: {
+    group: THREE.Group;
+    life: number;
+    shock?: { mesh: THREE.Mesh; radius: number; duration: number };
+  }[] = [];
   private remove(group: THREE.Object3D) {
     group.removeFromParent();
     group.traverse((o) => {

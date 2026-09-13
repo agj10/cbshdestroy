@@ -4,6 +4,12 @@ import { DisasterDirector, DISASTERS, type DisasterId } from "../src/disasters";
 import { PhysicsSimulation } from "../src/physics";
 import { buildCampus } from "../src/campus";
 import type { CampusPart, Vec3 } from "../src/types";
+import {
+  MAX_INTENSITY,
+  DISASTER_SETTINGS,
+  getDefaultSettings,
+  type DisasterSettings,
+} from "../src/disaster-settings";
 
 const directors: DisasterDirector[] = [];
 const simulations: PhysicsSimulation[] = [];
@@ -289,7 +295,7 @@ describe("disaster lifecycles", () => {
     expect(director.launch("meteor", { ...target, x: NaN }, 3)).toBe(false);
     expect(director.launch("fire", target, Infinity)).toBe(false);
     director.launch("fire", target, 500);
-    expect(director.effects[0].intensity).toBe(5);
+    expect(director.effects[0].intensity).toBe(MAX_INTENSITY);
     for (const dt of [NaN, Infinity, -1, 0]) director.update(dt);
     expect(director.effects[0].age).toBe(0);
     expect(calls).toHaveLength(0);
@@ -301,7 +307,245 @@ describe("disaster lifecycles", () => {
   });
 });
 
+describe("editable disaster settings", () => {
+  it("takes an independent immutable launch snapshot and never changes shared event durations", () => {
+    const { director } = harness();
+    const input = { duration: 60, radius: 40, heat: 2 };
+    director.launch("fire", target, 3, input);
+    input.radius = 2;
+    input.duration = 5;
+    director.launch("fire", target, 3, input);
+    expect(director.effects[0].settings.radius).toBe(40);
+    expect(director.effects[0].info.duration).toBe(60);
+    expect(director.effects[1].settings.radius).toBe(2);
+    expect(director.effects[1].info.duration).toBe(5);
+    expect(Object.isFrozen(director.effects[0].settings)).toBe(true);
+    expect(DISASTERS.find((info) => info.id === "fire")!.duration).toBe(30);
+    expect(director.effects[0].info).not.toBe(director.effects[1].info);
+  });
+
+  const cases = DISASTERS.flatMap(({ id }) =>
+    DISASTER_SETTINGS[id].map((field) => ({ id, field, key: field.key })),
+  );
+  it.each(cases)(
+    "$id / $key changes the visible event or applied physical effect",
+    ({ id, field }) => {
+      const baseline = getDefaultSettings(id);
+      if (id === "fire" && field.key === "direction") baseline.wind = 6;
+      if (id === "explosion" && field.key === "direction")
+        baseline.pattern = "directional";
+      const altered = {
+        ...baseline,
+        [field.key]:
+          field.type === "select"
+            ? field.options.find((option) => option.value !== field.default)!
+                .value
+            : field.key === "duration"
+              ? field.min
+              : field.default === field.max
+                ? field.min
+                : field.max,
+      };
+      const run = (settings: DisasterSettings) => {
+        const { director, scene, calls, waterSurfaces } = harness();
+        director.launch(id, target, 3, settings);
+        const initial: unknown[] = [];
+        scene.traverse((object) => {
+          initial.push(object.position.toArray(), object.scale.toArray());
+          if (
+            object instanceof THREE.Mesh &&
+            !(object instanceof THREE.InstancedMesh)
+          )
+            initial.push(
+              (
+                object.geometry as THREE.BufferGeometry & {
+                  parameters?: unknown;
+                }
+              ).parameters,
+            );
+        });
+        const duration = director.effects[0].info.duration;
+        advance(director, 12);
+        const water = waterSurfaces
+          .slice(-2)
+          .map((surface) => [
+            surface(target),
+            surface({ ...target, x: target.x + 30 }),
+          ]);
+        const output = JSON.stringify({ initial, duration, calls, water });
+        director.dispose();
+        return output;
+      };
+      expect(
+        run(altered),
+        `${id}.${field.key} must change rendered or physical behavior`,
+      ).not.toBe(run(baseline));
+    },
+  );
+
+  it("meteor speed changes arrival time, while diameter and iron composition increase impact", () => {
+    const slow = harness(),
+      fast = harness();
+    slow.director.launch("meteor", target, 3, {
+      speed: 10,
+      diameter: 3,
+      composition: "ice",
+    });
+    fast.director.launch("meteor", target, 3, {
+      speed: 180,
+      diameter: 12,
+      composition: "iron",
+    });
+    advance(slow.director, 2);
+    advance(fast.director, 2);
+    expect(slow.calls).toHaveLength(0);
+    const fastImpact = fast.calls.find((call) => call.method === "blast")!;
+    expect(fastImpact).toBeDefined();
+    advance(slow.director, 12);
+    const slowImpact = slow.calls.find((call) => call.method === "blast")!;
+    expect(fastImpact.args[1] as number).toBeGreaterThan(
+      (slowImpact.args[1] as number) * 4,
+    );
+    expect(fastImpact.args[2] as number).toBeGreaterThan(
+      (slowImpact.args[2] as number) * 20,
+    );
+  });
+
+  it("vertical meteor incidence removes horizontal travel and horizontal impulse bias", () => {
+    const { director, calls } = harness();
+    director.launch("meteor", target, 3, { angle: 90, direction: 72 });
+    expect(director.effects[0].group.position.x).toBeCloseTo(target.x, 8);
+    expect(director.effects[0].group.position.z).toBeCloseTo(target.z, 8);
+    advance(director, 3);
+    const options = calls.find((call) => call.method === "blast")!.args[3] as {
+      direction: Vec3;
+    };
+    expect(options.direction.x).toBeCloseTo(0, 8);
+    expect(options.direction.z).toBeCloseTo(0, 8);
+    expect(options.direction.y).toBeCloseTo(-1, 8);
+  });
+
+  it("simultaneous perpendicular waves retain their individual direction and local crest", () => {
+    const { director, calls, waterSurfaces } = harness();
+    director.launch("tsunami", target, 3, { direction: 0 });
+    director.launch("tsunami", target, 3, { direction: 90 });
+    advance(director, 5);
+    const water = calls.filter((call) => call.method === "water").slice(-2);
+    const north = water[0].args[1] as Vec3,
+      east = water[1].args[1] as Vec3;
+    expect(north.x).toBeCloseTo(0);
+    expect(north.z).toBeLessThan(0);
+    expect(east.x).toBeGreaterThan(0);
+    expect(east.z).toBeCloseTo(0);
+    const northSurface = waterSurfaces.at(-2)!,
+      eastSurface = waterSurfaces.at(-1)!;
+    const northCrest = { x: target.x, y: 0, z: target.z + 60 };
+    const eastCrest = { x: target.x - 60, y: 0, z: target.z };
+    expect(northSurface(northCrest)).toBeGreaterThan(7);
+    expect(northSurface(eastCrest)).toBeLessThan(0);
+    expect(eastSurface(eastCrest)).toBeGreaterThan(7);
+    expect(eastSurface(northCrest)).toBeLessThan(0);
+  });
+
+  it.each(DISASTERS)(
+    "$id accepts extreme settings, stays bounded and releases every event resource",
+    ({ id }) => {
+      const { director, scene } = harness();
+      const settings = Object.fromEntries(
+        DISASTER_SETTINGS[id].map((field) => [
+          field.key,
+          field.type === "select"
+            ? field.options.at(-1)!.value
+            : field.key === "duration"
+              ? 5
+              : field.max,
+        ]),
+      );
+      director.launch(id, target, MAX_INTENSITY, settings);
+      const duration = director.effects[0].info.duration;
+      for (let second = 0; second < Math.ceil(duration) + 1; second++) {
+        advance(director, 1);
+        expectFiniteScene(scene);
+        expect(
+          (director as unknown as { projectiles: unknown[] }).projectiles
+            .length,
+        ).toBeLessThanOrEqual(128);
+      }
+      expect(director.effects).toHaveLength(0);
+      advance(director, 8);
+      expect(scene.children).toHaveLength(2);
+      const particles = scene.children.find(
+        (child) => child instanceof THREE.InstancedMesh,
+      ) as THREE.InstancedMesh;
+      expect(particles.count).toBe(0);
+    },
+  );
+
+  it("extended lightning executes exactly the requested count and does not linger after its last strike", () => {
+    const { director, calls } = harness();
+    director.launch("lightning", target, 3, {
+      strikes: 12,
+      interval: 2,
+      spread: 40,
+    });
+    const duration = director.effects[0].info.duration;
+    expect(duration).toBeGreaterThan(22);
+    advance(director, duration + 1);
+    expect(calls.filter((call) => call.method === "blast")).toHaveLength(12);
+    expect(director.effects).toHaveLength(0);
+  });
+
+  it.each([0.1, 1 / 60])(
+    "short storms still land high-altitude hail at frame step %s",
+    (dt) => {
+      const { director, calls } = harness();
+      director.launch("hail", target, 3, { duration: 5, height: 120, rate: 1 });
+      advance(director, 6, dt);
+      expect(calls.filter((call) => call.method === "blast")).toHaveLength(1);
+      expect(director.effects).toHaveLength(0);
+    },
+  );
+});
+
 describe("disaster / Rapier integration", () => {
+  it("maximum default meteor breaks almost the entire school and casts structural debris beyond 100 m", async () => {
+    const campus = buildCampus();
+    const sim = await PhysicsSimulation.create(campus.parts);
+    simulations.push(sim);
+    const scene = new THREE.Scene();
+    scene.add(campus.group);
+    const director = new DisasterDirector(scene, sim);
+    directors.push(director);
+    director.launch("meteor", target, MAX_INTENSITY);
+    const structural = campus.parts.filter(
+      (part) =>
+        !part.spec.anchored &&
+        ["column", "wall", "slab", "roof"].includes(part.spec.kind),
+    );
+    const far = new Set<string>();
+    for (let i = 0; i < 9 * 60; i++) {
+      director.update(1 / 60);
+      sim.step(1 / 60);
+      for (const part of structural) {
+        const state = sim.getState(part.spec.id)!;
+        expectFinite(numericValues(state));
+        if (
+          Math.hypot(
+            state.position.x - part.spec.position.x,
+            state.position.z - part.spec.position.z,
+          ) > 100
+        )
+          far.add(part.spec.id);
+      }
+    }
+    expect(structural.length).toBeGreaterThan(100);
+    const detached = structural.filter(
+      (part) => sim.getState(part.spec.id)!.detached,
+    ).length;
+    expect(detached / structural.length).toBeGreaterThan(0.95);
+    expect(far.size).toBeGreaterThan(5);
+  }, 30_000);
+
   it("default meteor produces a visible local collapse while preserving most of the campus", async () => {
     const campus = buildCampus();
     const sim = await PhysicsSimulation.create(campus.parts);

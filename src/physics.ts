@@ -8,6 +8,26 @@ const SUPPORT_INTERVAL = 0.12;
 const AMBIENT_TEMPERATURE = 20;
 const SUPPORT_CAPACITY = 0.4;
 const CELL_SIZE = 8;
+const MAX_LINEAR_SPEED = 220;
+const MAX_ANGULAR_SPEED = 25;
+
+export interface BlastOptions {
+  impulseScale?: number;
+  lift?: number;
+  direction?: Vec3;
+}
+
+export interface EarthquakeOptions {
+  frequency?: number;
+  /** Horizontal shaking orientation in degrees. */
+  direction?: number;
+}
+
+export interface VortexOptions {
+  radius?: number;
+  spin?: number;
+  lift?: number;
+}
 
 interface MaterialProperties {
   density: number;
@@ -63,6 +83,12 @@ const clamp = (value: number, low: number, high: number): number =>
   Math.min(high, Math.max(low, value));
 const finiteVec = (v: Vec3): boolean =>
   Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+const boundedOption = (
+  value: number | undefined,
+  fallback: number,
+  low: number,
+  high: number,
+): number => (Number.isFinite(value) ? clamp(value!, low, high) : fallback);
 
 function stableHash(text: string): number {
   let hash = 2166136261;
@@ -129,9 +155,10 @@ export class PhysicsSimulation {
   private initialize(): void {
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.world.timestep = FIXED_DT;
+    this.world.maxCcdSubsteps = 1;
     this.events = new RAPIER.EventQueue(true);
     this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(350, 0.5, 350)
+      RAPIER.ColliderDesc.cuboid(1_000, 0.5, 1_000)
         .setTranslation(0, -0.5, 0)
         .setFriction(0.82)
         .setRestitution(0.04),
@@ -246,6 +273,7 @@ export class PhysicsSimulation {
       }
       this.world.step(this.events);
       this.processContacts();
+      for (const record of this.dynamicRecords) this.boundMotion(record);
       this.supportClock += FIXED_DT;
       if (this.supportClock + 1e-9 >= SUPPORT_INTERVAL) {
         const tick = this.supportClock;
@@ -305,6 +333,43 @@ export class PhysicsSimulation {
     this.dynamicRecords.add(record);
   }
 
+  /** Keep combined disasters within the CCD solver's supported speed range. */
+  private boundMotion(record: PartRecord): void {
+    const linear = record.body.linvel();
+    const speed = Math.hypot(linear.x, linear.y, linear.z);
+    // Add collision substeps only once a fast disaster needs them.
+    if (speed > 45 && this.world.maxCcdSubsteps < 4)
+      this.world.maxCcdSubsteps = 4;
+    if (speed > MAX_LINEAR_SPEED) {
+      const scale = MAX_LINEAR_SPEED / speed;
+      record.body.setLinvel(
+        { x: linear.x * scale, y: linear.y * scale, z: linear.z * scale },
+        true,
+      );
+    }
+    const angular = record.body.angvel();
+    const spin = Math.hypot(angular.x, angular.y, angular.z);
+    if (spin > MAX_ANGULAR_SPEED) {
+      const scale = MAX_ANGULAR_SPEED / spin;
+      record.body.setAngvel(
+        { x: angular.x * scale, y: angular.y * scale, z: angular.z * scale },
+        true,
+      );
+    }
+  }
+
+  private applyImpulse(record: PartRecord, impulse: Vec3): void {
+    if (!finiteVec(impulse)) return;
+    const magnitude = Math.hypot(impulse.x, impulse.y, impulse.z);
+    const limit = record.mass * MAX_LINEAR_SPEED * 2;
+    const scale = magnitude > limit ? limit / magnitude : 1;
+    record.body.applyImpulse(
+      { x: impulse.x * scale, y: impulse.y * scale, z: impulse.z * scale },
+      true,
+    );
+    this.boundMotion(record);
+  }
+
   private updateSupports(dt: number): void {
     const toDetach: PartRecord[] = [];
     for (const record of this.records) {
@@ -331,7 +396,12 @@ export class PhysicsSimulation {
   }
 
   /** Radial impulse and local failure. power is an authored game intensity, not explosive yield. */
-  blast(center: Vec3, radius: number, power: number): void {
+  blast(
+    center: Vec3,
+    radius: number,
+    power: number,
+    options: BlastOptions = {},
+  ): void {
     if (
       this.disposed ||
       !finiteVec(center) ||
@@ -341,6 +411,19 @@ export class PhysicsSimulation {
       power <= 0
     )
       return;
+    const impulseScale = boundedOption(options.impulseScale, 1, 0.1, 8);
+    const lift = boundedOption(options.lift, 1, 0, 3);
+    const direction =
+      options.direction && finiteVec(options.direction)
+        ? options.direction
+        : { x: 0, y: 0, z: 0 };
+    const directionLength = Math.hypot(direction.x, direction.y, direction.z);
+    const biasScale = directionLength > 0 ? 0.28 / directionLength : 0;
+    // The original range retains its response; extreme settings progressively unlock
+    // a much stronger impulse instead of plateauing at 28 metres per second.
+    const extremeVelocity =
+      172 * (1 - Math.exp(-Math.max(0, power - 200) / 1_600));
+    const peakVelocity = Math.min(28, power * 0.14) + extremeVelocity;
     for (const record of this.records) {
       const p = record.body.translation();
       const dx = p.x - center.x,
@@ -363,34 +446,44 @@ export class PhysicsSimulation {
       this.damagePart(record, (power * falloff) / (65 * strength));
       if (!record.detached) continue;
       const normalizer = Math.max(0.5, distance);
-      const velocity = Math.min(28, power * 0.14) * falloff;
-      record.body.applyImpulse(
-        {
-          x: (dx / normalizer) * velocity * record.mass,
-          y: ((dy / normalizer) * velocity + 2.5 * falloff) * record.mass,
-          z: (dz / normalizer) * velocity * record.mass,
-        },
-        true,
-      );
+      const velocity = peakVelocity * falloff * impulseScale;
+      const uplift =
+        (2.5 + extremeVelocity * 0.42) * falloff * impulseScale * lift;
+      this.applyImpulse(record, {
+        x: (dx / normalizer + direction.x * biasScale) * velocity * record.mass,
+        y:
+          ((dy / normalizer + direction.y * biasScale) * velocity + uplift) *
+          record.mass,
+        z: (dz / normalizer + direction.z * biasScale) * velocity * record.mass,
+      });
     }
   }
 
-  earthquake(dt: number, strength: number): void {
+  earthquake(
+    dt: number,
+    strength: number,
+    options: EarthquakeOptions = {},
+  ): void {
     if (!this.validEffect(dt, strength)) return;
-    const time = this.elapsed;
-    const ax =
+    const time = this.elapsed * boundedOption(options.frequency, 1, 0.25, 3);
+    const direction =
+      (boundedOption(options.direction, 0, -360, 360) * Math.PI) / 180;
+    const baseX =
       strength * (Math.sin(time * 13.1) + 0.47 * Math.sin(time * 23.7 + 0.8));
-    const az =
+    const baseZ =
       strength *
       (0.8 * Math.sin(time * 10.7 + 1.2) + 0.38 * Math.sin(time * 29.1));
+    const ax = baseX * Math.cos(direction) - baseZ * Math.sin(direction);
+    const az = baseX * Math.sin(direction) + baseZ * Math.cos(direction);
     const acceleration = Math.hypot(ax, az);
     for (const record of this.records) {
       if (record.detached) {
         // Inertial forcing in the shaking ground reference frame.
-        record.body.applyImpulse(
-          { x: -ax * record.mass * dt, y: 0, z: -az * record.mass * dt },
-          true,
-        );
+        this.applyImpulse(record, {
+          x: -ax * record.mass * dt,
+          y: 0,
+          z: -az * record.mass * dt,
+        });
       } else {
         const heightFactor = 0.72 + Math.max(0, record.startPosition.y) * 0.065;
         const load = Math.max(0, acceleration * heightFactor - 1.7);
@@ -512,27 +605,32 @@ export class PhysicsSimulation {
         500 * size.x * size.z * submerged * ry * Math.abs(ry);
       // Bound the explicit drag impulse to remain stable for thin fragments at high flows.
       const forceLimit = record.mass * 40;
-      record.body.applyImpulse(
-        {
-          x: clamp(fx, -forceLimit, forceLimit) * dt,
-          y: clamp(fy, -forceLimit, forceLimit) * dt,
-          z: clamp(fz, -forceLimit, forceLimit) * dt,
-        },
-        true,
-      );
+      this.applyImpulse(record, {
+        x: clamp(fx, -forceLimit, forceLimit) * dt,
+        y: clamp(fy, -forceLimit, forceLimit) * dt,
+        z: clamp(fz, -forceLimit, forceLimit) * dt,
+      });
     }
   }
 
-  vortex(center: Vec3, strength: number, dt: number): void {
+  vortex(
+    center: Vec3,
+    strength: number,
+    dt: number,
+    options: VortexOptions = {},
+  ): void {
     if (!this.validEffect(dt, strength) || !finiteVec(center)) return;
+    const radius = boundedOption(options.radius, 70, 1, 1_200);
+    const spin = boundedOption(options.spin, 1, -5, 5);
+    const lift = boundedOption(options.lift, 1, 0, 6);
     for (const record of this.records) {
       const p = record.body.translation();
       const dx = center.x - p.x,
         dy = center.y - p.y,
         dz = center.z - p.z;
       const distance = Math.hypot(dx, dy, dz);
-      if (distance > 70) continue;
-      const influence = Math.max(0, 1 - distance / 70);
+      if (distance > radius) continue;
+      const influence = Math.max(0, 1 - distance / radius);
       this.damagePart(
         record,
         (dt * strength * influence * 0.2) /
@@ -541,14 +639,11 @@ export class PhysicsSimulation {
       if (!record.detached) continue;
       const divisor = Math.max(3, distance);
       const force = strength * influence * record.mass * dt;
-      record.body.applyImpulse(
-        {
-          x: ((dx * 8 - dz * 5) / divisor) * force,
-          y: ((dy * 8) / divisor + 2) * force,
-          z: ((dz * 8 + dx * 5) / divisor) * force,
-        },
-        true,
-      );
+      this.applyImpulse(record, {
+        x: ((dx * 8 - dz * 5 * spin) / divisor) * force,
+        y: ((dy * 8) / divisor + 2) * lift * force,
+        z: ((dz * 8 + dx * 5 * spin) / divisor) * force,
+      });
     }
   }
 
