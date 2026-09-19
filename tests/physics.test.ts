@@ -193,6 +193,20 @@ describe("structural physics", () => {
     expect(sim.getState("wall")!.detached).toBe(false);
   });
 
+  it("accumulates water corrosion gradually and restores it on reset", async () => {
+    const sim = await simulation([
+      part("roof", { x: 0, y: 2, z: 0 }, [], "roof"),
+      part("wall", { x: 7, y: 2, z: 0 }, [], "wall"),
+    ]);
+    sim.corrode({ x: 0, y: 2, z: 0 }, 10, 0.8);
+    expect(sim.getState("roof")!.corrosion).toBeGreaterThan(
+      sim.getState("wall")!.corrosion,
+    );
+    expect(sim.getState("roof")!.damage).toBeGreaterThan(0);
+    sim.reset();
+    expect(sim.getState("roof")!.corrosion).toBe(0);
+  });
+
   it("applies a traveling water front only to parts the local surface has reached", async () => {
     const sim = await simulation([
       part("near-wall", { x: -8, y: 1, z: 0 }, [], "wall"),

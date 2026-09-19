@@ -1,3 +1,5 @@
+import { applySurfaceWear, type WearUniforms } from "./surface-wear";
+import { affectedTiles, makeCut, terrainChunk, terrainHeight, TILE, type CraterCut } from "./terrain-surface";
 import RAPIER from "@dimforge/rapier3d-compat";
 import * as THREE from "three";
 import type { CampusPart, PartKind, PhysicsStats, Vec3 } from "./types";
@@ -51,11 +53,28 @@ export interface PartPhysicsState {
   readonly detached: boolean;
   readonly damage: number;
   readonly temperature: number;
+  readonly corrosion: number;
+  readonly erosion: number;
+  readonly mutation: number;
   readonly position: Vec3;
   readonly velocity: Vec3;
 }
 
+/** An intact piece that currently has enough heat for visible flame to be sustained. */
+export interface BurningPart {
+  readonly id: string;
+  readonly part: CampusPart;
+  readonly temperature: number;
+  readonly damage: number;
+  readonly burnTime: number;
+}
+
 interface PartRecord {
+  lastDustTime: number;
+  wear: WearUniforms[];
+  erosion: number;
+  mutation: number;
+  originalGeometry: THREE.BufferGeometry;
   part: CampusPart;
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
@@ -63,6 +82,7 @@ interface PartRecord {
   volume: number;
   damage: number;
   temperature: number;
+  corrosion: number;
   detached: boolean;
   impactSpeed: number;
   unsupportedFor: number;
@@ -76,6 +96,8 @@ interface PartRecord {
   baseColors: Array<THREE.Color | undefined>;
   appearanceDamage: number;
   appearanceTemperature: number;
+  appearanceCorrosion: number;
+  burnTime: number;
 }
 
 let rapierReady: Promise<void> | undefined;
@@ -108,6 +130,8 @@ function hasColor(
 
 export class PhysicsSimulation {
   readonly parts: CampusPart[];
+  onFracture: (position: Vec3, size: Vec3) => void = () => {};
+  onCrumble: (position: Vec3, color: number) => void = () => {};
   elapsed = 0;
   private world!: RAPIER.World;
   private events!: RAPIER.EventQueue;
@@ -115,6 +139,10 @@ export class PhysicsSimulation {
   private byId = new Map<string, PartRecord>();
   private byCollider = new Map<number, PartRecord>();
   private dynamicRecords = new Set<PartRecord>();
+  private flatGround?: RAPIER.Collider;
+  private terrainImpactCount = 0;
+  private terrainCuts: CraterCut[] = [];
+  private groundTiles = new Map<string, RAPIER.Collider>();
   private accumulator = 0;
   private supportClock = 0;
   private disposed = false;
@@ -157,12 +185,7 @@ export class PhysicsSimulation {
     this.world.timestep = FIXED_DT;
     this.world.maxCcdSubsteps = 1;
     this.events = new RAPIER.EventQueue(true);
-    this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(1_000, 0.5, 1_000)
-        .setTranslation(0, -0.5, 0)
-        .setFriction(0.82)
-        .setRestitution(0.04),
-    );
+    this.flatGround=this.world.createCollider(RAPIER.ColliderDesc.cuboid(1000,.5,1000).setTranslation(0,-.5,0).setFriction(.82).setRestitution(.04));
 
     for (const part of this.parts) {
       const { spec, mesh } = part;
@@ -196,7 +219,12 @@ export class PhysicsSimulation {
       mesh.material = Array.isArray(originalMaterial)
         ? materials
         : materials[0];
+      mesh.visible = true;
+      mesh.scale.setScalar(1);
       const record: PartRecord = {
+        lastDustTime: -1,
+        wear: materials.map(applySurfaceWear),
+        erosion: 0, mutation: 0, originalGeometry: mesh.geometry,
         part,
         body,
         collider,
@@ -204,6 +232,7 @@ export class PhysicsSimulation {
         mass: volume * material.density,
         damage: 0,
         temperature: AMBIENT_TEMPERATURE,
+        corrosion: 0,
         detached: false,
         impactSpeed: 0,
         unsupportedFor: 0,
@@ -219,6 +248,8 @@ export class PhysicsSimulation {
         ),
         appearanceDamage: 0,
         appearanceTemperature: AMBIENT_TEMPERATURE,
+        appearanceCorrosion: 0,
+        burnTime: 0,
       };
       this.records.push(record);
       this.byId.set(spec.id, record);
@@ -294,6 +325,11 @@ export class PhysicsSimulation {
     this.events.drainContactForceEvents((event) => {
       const first = this.byCollider.get(event.collider1());
       const second = this.byCollider.get(event.collider2());
+      const striking = first?.detached ? first : second?.detached ? second : undefined;
+      if(striking && striking.impactSpeed > 3 && this.elapsed - striking.lastDustTime > .3){
+        this.onFracture(striking.body.translation(),striking.part.spec.size);
+        striking.lastDustTime=this.elapsed;
+      }
       if (!first || !second || first.detached === second.detached) return;
       const intact = first.detached ? second : first;
       const moving = first.detached ? first : second;
@@ -321,6 +357,8 @@ export class PhysicsSimulation {
   private detach(record: PartRecord): void {
     if (record.detached) return;
     record.detached = true;
+    record.lastDustTime = this.elapsed;
+    this.onFracture(record.body.translation(),record.part.spec.size);
     record.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
     record.body.recomputeMassPropertiesFromColliders();
     record.body.enableCcd(true);
@@ -521,16 +559,168 @@ export class PhysicsSimulation {
     }
   }
 
+  /** Tractor field only accelerates loose debris; it never damages intact supports. */
+  attractDebris(center: Vec3, radius: number, acceleration: number, dt: number): void {
+    if (this.disposed || !finiteVec(center) || ![radius, acceleration, dt].every(Number.isFinite) || radius <= 0 || acceleration <= 0 || dt <= 0) return;
+    for (const record of this.dynamicRecords) {
+      const p = record.body.translation(), v = record.body.linvel();
+      const d = new THREE.Vector3(center.x - p.x, center.y - p.y, center.z - p.z);
+      const distance = d.length();
+      if (distance >= radius || distance < 0.01) continue;
+      const pull = acceleration * (1 - distance / radius);
+      d.multiplyScalar(pull / distance);
+      record.body.applyImpulse({
+        x: (d.x - v.x * 0.8) * record.mass * dt,
+        y: (d.y + 9.81 - v.y * 0.8) * record.mass * dt,
+        z: (d.z - v.z * 0.8) * record.mass * dt,
+      }, true);
+    }
+  }
+
+  private erode(record: PartRecord, amount: number, color: number): void {
+    if(record.erosion >= 1 || amount <= 0)return;
+    const before=record.erosion;
+    record.erosion=clamp(before+amount,0,1);
+    const scale=Math.max(.05,1-record.erosion*.9);
+    record.part.mesh.scale.setScalar(scale);
+    const size=record.part.spec.size;
+    record.collider.setShape(new RAPIER.Cuboid(size.x*scale/2,size.y*scale/2,size.z*scale/2));
+    this.damagePart(record,amount*1.2);
+    if(Math.floor(before*20)!==Math.floor(record.erosion*20))this.onCrumble(record.body.translation(),color);
+    if(record.erosion >= 1){record.part.mesh.visible=false;record.collider.setEnabled(false);record.body.setEnabled(false);}
+  }
+
+  /** Fictional mutation deforms the struck member progressively and weakens its supports. */
+  mutate(center: Vec3, radius: number, amount: number): void {
+    if(this.disposed || !finiteVec(center) || ![radius,amount].every(Number.isFinite) || radius<=0 || amount<=0)return;
+    for(const record of this.records){
+      const p=record.body.translation(),distance=Math.hypot(p.x-center.x,p.y-center.y,p.z-center.z);
+      if(distance>=radius || record.erosion>=1)continue;
+      record.mutation=clamp(record.mutation+amount*(1-distance/radius),0,1);
+      if(record.part.mesh.geometry===record.originalGeometry){
+        const size=record.part.spec.size;
+        record.part.mesh.geometry=new THREE.BoxGeometry(size.x,size.y,size.z,4,6,4);
+      }
+      const geometry=record.part.mesh.geometry;
+      const size=record.part.spec.size;
+      const template=new THREE.BoxGeometry(size.x,size.y,size.z,4,6,4);
+      const original=template.attributes.position;
+      const pos=geometry.attributes.position, m=record.mutation, phase=stableHash(record.part.spec.id)*6.28;
+      for(let i=0;i<pos.count;i++){
+        const x=original.getX(i),y=original.getY(i),z=original.getZ(i),wave=Math.sin(y/size.y*6+phase);
+        const twist=m*wave*.65;
+        pos.setXYZ(i,(x*Math.cos(twist)-z*Math.sin(twist))*(1+m*wave*.28),y+Math.sin(x/size.x*5+phase)*m*size.y*.14,x*Math.sin(twist)+z*Math.cos(twist));
+      }
+      template.dispose();
+      pos.needsUpdate=true;geometry.computeVertexNormals();geometry.computeBoundingSphere();
+      record.collider.setShape(new RAPIER.ConvexPolyhedron(new Float32Array(pos.array)));
+      for(const material of record.materials)if(hasColor(material)){
+        material.color.setHSL(.72+Math.sin(phase)*.15,.65,.45);
+        material.emissive.setHSL(.38,.8,m*.18);
+      }
+      this.damagePart(record,amount*.12);
+    }
+  }
+
+  melt(center:Vec3,radius:number,amount:number):void {
+    if(this.disposed || !finiteVec(center) || ![radius,amount].every(Number.isFinite) || radius<=0 || amount<=0)return;
+    for(const record of this.records){
+      const p=record.body.translation(),distance=Math.hypot(p.x-center.x,p.y-center.y,p.z-center.z);
+      if(distance>=radius || record.erosion>=1)continue;
+      const dose=amount*(1-distance/radius);
+      record.temperature=Math.min(1200,record.temperature+dose*1600);
+      if(record.temperature>650){
+        this.erode(record,dose*.6,0xe87b32);
+        const scale=Math.max(.05,1-record.erosion*.9),size=record.part.spec.size;
+        record.part.mesh.scale.set(scale*(1+record.erosion*.4),scale*scale,scale*(1+record.erosion*.4));
+        record.collider.setShape(new RAPIER.Cuboid(size.x*record.part.mesh.scale.x/2,size.y*record.part.mesh.scale.y/2,size.z*record.part.mesh.scale.z/2));
+      }
+    }
+  }
+
+  /** Slow wet/chemical degradation used by flooding and salt-water waves. */
+  corrode(center: Vec3, radius: number, amount: number, surface?: (p: Vec3) => number): void {
+    if (
+      this.disposed ||
+      !finiteVec(center) ||
+      !Number.isFinite(radius) ||
+      !Number.isFinite(amount) ||
+      radius <= 0 ||
+      amount <= 0
+    )
+      return;
+    for (const record of this.records) {
+      const p = record.body.translation();
+      if (surface && surface(p) <= p.y - record.part.spec.size.y / 2) continue;
+      const distance = Math.hypot(p.x - center.x, p.y - center.y, p.z - center.z);
+      if (distance >= radius) continue;
+      const susceptibility =
+        record.part.spec.kind === "roof" || record.part.spec.kind === "detail"
+          ? 1
+          : record.part.spec.kind === "wood"
+            ? 0.78
+            : record.part.spec.kind === "glass"
+              ? 0.22
+              : 0.42;
+      const wetness = (1 - distance / radius) * susceptibility;
+      record.corrosion = clamp(record.corrosion + amount * wetness, 0, 1);
+      if(record.corrosion > .55)this.erode(record, amount * wetness * (record.corrosion-.55) * .7, 0x77806b);
+      // Corrosion is intentionally gradual: waves and water still cause their
+      // immediate physical load separately, while repeated exposure weakens joins.
+      this.damagePart(
+        record,
+        (amount * wetness * (0.008 + record.corrosion * 0.035)) /
+          MATERIALS[record.part.spec.kind].strength,
+      );
+    }
+  }
+
+  /** Replace excavated ground tiles with the same density surface used by rendering. */
+  deformGround(center: Vec3, radius: number, depth: number): void {
+    if(this.disposed || !finiteVec(center) || ![radius,depth].every(Number.isFinite)) return;
+    if(this.flatGround){
+      this.world.removeCollider(this.flatGround,true);this.flatGround=undefined;
+    for(let x=-10;x<10;x++) for(let z=-10;z<10;z++) {
+      this.groundTiles.set(x+','+z,this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(TILE/2,.5,TILE/2).setTranslation((x+.5)*TILE,-.5,(z+.5)*TILE).setFriction(.82)));
+    }
+    for(const [x,z,sx,sz] of [[-620,0,380,1000],[620,0,380,1000],[0,-620,240,380],[0,620,240,380]])
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(sx,.5,sz).setTranslation(x,-.5,z));
+
+    }
+    const cut=makeCut(center,radius,depth);this.terrainCuts.push(cut);
+    for(const [x,z] of affectedTiles(cut)) {
+      const key=x+','+z, old=this.groundTiles.get(key);
+      if(old)this.world.removeCollider(old,true);
+      const geometry=terrainChunk(this.terrainCuts,x,z);
+      const vertices=new Float32Array(geometry.attributes.position.array);
+      const indices=Uint32Array.from({length:vertices.length/3},(_,i)=>i);
+      this.groundTiles.set(key,this.world.createCollider(RAPIER.ColliderDesc.trimesh(vertices,indices).setFriction(.9)));
+      geometry.dispose();
+    }
+    for(const record of this.records){
+      const p=record.body.translation(),bottom=p.y-record.part.spec.size.y/2;
+      if(record.part.spec.anchored && !record.detached && bottom<.35 && terrainHeight(this.terrainCuts,p.x,p.z)<bottom-.35)
+        this.damagePart(record,1);
+    }
+    for(const record of this.dynamicRecords)record.body.wakeUp();
+    this.terrainImpactCount++;
+  }
+
   private updateThermal(dt: number): void {
     // Apply spread simultaneously so array order cannot make heat traverse a whole building in one tick.
     const transfers = new Map<PartRecord, number>();
     for (const record of this.records) {
       const material = MATERIALS[record.part.spec.kind];
+      const combustible = ["wood", "detail", "roof"].includes(
+        record.part.spec.kind,
+      );
+      const ignition = material.ignition ?? material.heatLimit * 1.18;
       const burning =
-        material.ignition !== undefined &&
-        record.temperature >= material.ignition;
-      if (burning && record.damage < 1) {
-        record.temperature = Math.min(1_000, record.temperature + 115 * dt);
+        combustible && record.temperature >= ignition && record.erosion < 1;
+      if (burning) {
+        record.burnTime += dt;
+        record.temperature = Math.min(1_050, record.temperature + 135 * dt);
         const p = record.body.translation();
         for (const neighbor of record.neighbors) {
           const q = neighbor.body.translation();
@@ -547,6 +737,23 @@ export class PhysicsSimulation {
         this.damagePart(
           record,
           (overload * dt * (material.ignition ? 0.12 : 0.065)) /
+            material.strength,
+        );
+      }
+      // Glass shatters and concrete spalls under heat. Combustible members char at
+      // different rates, so a fire first weakens local joins and only then causes
+      // gravity-driven support failures. This deliberately avoids blast-like release.
+      if (burning && record.burnTime > 1.2) {
+        this.erode(record, dt * (record.part.spec.kind === "wood" ? .065 : .033), 0x514b43);
+        const charRate =
+          record.part.spec.kind === "wood"
+            ? 0.035
+            : record.part.spec.kind === "detail"
+              ? 0.018
+              : 0.012;
+        this.damagePart(
+          record,
+          (dt * charRate * (1 + Math.min(2.5, record.burnTime) * 0.12)) /
             material.strength,
         );
       }
@@ -661,11 +868,14 @@ export class PhysicsSimulation {
     for (const record of this.records) {
       if (
         record.damage === record.appearanceDamage &&
-        record.temperature === record.appearanceTemperature
+        record.temperature === record.appearanceTemperature &&
+        record.corrosion === record.appearanceCorrosion
       )
         continue;
+      for(const wear of record.wear){wear.corrosion.value=record.corrosion;wear.erosion.value=record.erosion;}
       record.appearanceDamage = record.damage;
       record.appearanceTemperature = record.temperature;
+      record.appearanceCorrosion = record.corrosion;
       for (let i = 0; i < record.materials.length; i++) {
         const material = record.materials[i];
         const base = record.baseColors[i];
@@ -674,6 +884,12 @@ export class PhysicsSimulation {
         material.color
           .copy(base)
           .multiplyScalar(1 - record.damage * 0.24 - scorch * 0.48);
+        if(record.mutation>0)material.color.lerp(new THREE.Color().setHSL(.72+Math.sin(stableHash(record.part.spec.id)*6.28)*.15,.7,.45),record.mutation);
+        if (record.corrosion > 0)
+          material.color.lerp(
+            new THREE.Color(0x5d6657),
+            Math.min(0.65, record.corrosion * 0.65),
+          );
         if (
           "emissive" in material &&
           MATERIALS[record.part.spec.kind].ignition &&
@@ -697,9 +913,41 @@ export class PhysicsSimulation {
       detached: record.detached,
       damage: record.damage,
       temperature: record.temperature,
+      corrosion: record.corrosion,
+      erosion: record.erosion,
+      mutation: record.mutation,
       position: { ...record.body.translation() },
       velocity: { ...record.body.linvel() },
     };
+  }
+
+  /**
+   * Returns only living, combustible members. The rendering layer uses these
+   * references to parent flames and smoke to real geometry instead of world-space
+   * particles, so the visual fire follows the structure until that structure fails.
+   */
+  getBurningParts(): readonly BurningPart[] {
+    if (this.disposed) return [];
+    const burning: BurningPart[] = [];
+    for (const record of this.records) {
+      const kind = record.part.spec.kind;
+      const combustible = kind === "wood" || kind === "detail" || kind === "roof";
+      const material = MATERIALS[kind];
+      const ignition = material.ignition ?? material.heatLimit * 1.18;
+      if (
+        combustible &&
+        record.erosion < 1 &&
+        record.temperature >= ignition
+      )
+        burning.push({
+          id: record.part.spec.id,
+          part: record.part,
+          temperature: record.temperature,
+          damage: record.damage,
+          burnTime: record.burnTime,
+        });
+    }
+    return burning;
   }
 
   get stats(): PhysicsStats {
@@ -718,12 +966,10 @@ export class PhysicsSimulation {
         const v = record.body.linvel();
         if (v.x ** 2 + v.y ** 2 + v.z ** 2 > 0.04) moving++;
       }
-      const ignition = MATERIALS[record.part.spec.kind].ignition;
-      if (
-        ignition !== undefined &&
-        record.temperature >= ignition &&
-        record.damage < 1
-      )
+      const kind = record.part.spec.kind;
+      const combustible = kind === "wood" || kind === "detail" || kind === "roof";
+      const ignition = MATERIALS[kind].ignition ?? MATERIALS[kind].heatLimit * 1.18;
+      if (combustible && record.temperature >= ignition && record.erosion < 1)
         burning++;
     }
     return {
@@ -743,6 +989,8 @@ export class PhysicsSimulation {
     // Rebuild the world as well as the visible parts, clearing contact warm starts and sleep islands.
     // This makes repeated runs deterministic even after an earlier run left resting rubble.
     for (const record of this.records) {
+      if (record.part.mesh.geometry !== record.originalGeometry) record.part.mesh.geometry.dispose();
+      record.part.mesh.geometry = record.originalGeometry;
       record.part.mesh.position.copy(record.startPosition);
       record.part.mesh.quaternion.copy(record.startRotation);
       record.part.mesh.material = record.originalMaterial;
@@ -754,12 +1002,17 @@ export class PhysicsSimulation {
     this.byId.clear();
     this.byCollider.clear();
     this.dynamicRecords.clear();
+    this.flatGround = undefined;
+    this.terrainCuts = [];
+    this.groundTiles.clear();
+    this.terrainImpactCount = 0;
     this.initialize();
   }
 
   dispose(): void {
     if (this.disposed) return;
     for (const record of this.records) {
+      if(record.part.mesh.geometry!==record.originalGeometry){record.part.mesh.geometry.dispose();record.part.mesh.geometry=record.originalGeometry;}
       record.part.mesh.material = record.originalMaterial;
       for (const material of record.materials) material.dispose();
     }

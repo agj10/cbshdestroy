@@ -16,6 +16,13 @@ const simulations: PhysicsSimulation[] = [];
 const target = { x: 4, y: 8, z: -19.5 };
 type Call = { method: string; args: unknown[] };
 
+function fireFixture(): CampusPart[] {
+  return [1,3,6,10,16].map((distance,i)=>{
+    const position={x:target.x+distance,y:target.y,z:target.z+distance*.6};
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(2,2,1),new THREE.MeshStandardMaterial());mesh.position.copy(position);
+    return {mesh,spec:{id:'fire-'+i,position,size:{x:2,y:2,z:1},kind:'wood',supports:[],color:0x884422}};
+  });
+}
 function harness(parts: CampusPart[] = []) {
   const calls: Call[] = [];
   const waterSurfaces: Array<(position: Vec3) => number> = [];
@@ -28,11 +35,18 @@ function harness(parts: CampusPart[] = []) {
     };
   const sim = {
     parts,
+    getState: (id: string) => {
+      const part=parts.find(part=>part.spec.id===id);
+      return part ? {position:part.spec.position,temperature:300,damage:0,detached:false,erosion:0} : undefined;
+    },
+    getBurningParts: () => [],
     blast: record("blast"),
     heat: record("heat"),
     earthquake: record("earthquake"),
     water: record("water"),
     vortex: record("vortex"),
+    corrode: record("corrode"),
+    deformGround: record("deformGround"),
   } as unknown as PhysicsSimulation;
   const scene = new THREE.Scene();
   const director = new DisasterDirector(scene, sim);
@@ -101,7 +115,7 @@ describe("disaster lifecycles", () => {
   it.each(DISASTERS)(
     "$id applies a physical effect, stays finite, and ends on its simulation clock",
     (info) => {
-      const { director, scene, calls } = harness();
+      const { director, scene, calls } = harness(info.id === "fire" ? fireFixture() : []);
       const onEvent = vi.fn();
       director.onEvent = onEvent;
       expect(director.launch(info.id, target, 3)).toBe(true);
@@ -217,6 +231,42 @@ describe("disaster lifecycles", () => {
     director.reset();
     expect(scene.children).toHaveLength(2);
   });
+
+  it("lets an active UFO group fire at direct click or drag targets", () => {
+    const { director, calls, scene } = harness();
+    director.launch("aliens", target, 3, { craftCount: 1, beam: 1.5 });
+    expect(director.attackAliens({ x: -22, y: 0, z: 18 })).toBe(true);
+    expect(calls.some((call) => call.method === "blast")).toBe(true);
+    expect(calls.some((call) => call.method === "heat")).toBe(true);
+    expect(scene.children).toHaveLength(4);
+    expect(director.attackAliens({ x: -22, y: 0, z: 18 })).toBe(false);
+    advance(director, 0.2);
+    expect(director.attackAliens({ x: 24, y: 0, z: 18 })).toBe(true);
+  });
+
+  it.each(["meteor", "explosion", "aliens", "plane"] as const)(
+    "%s creates a physical crater rim and a terrain callback after a strong impact",
+    (id) => {
+      const { director, calls } = harness();
+      const terrain = vi.fn();
+      director.onTerrainImpact = terrain;
+      director.launch(id, target, 8);
+      advance(director, 8);
+      expect(calls.some((call) => call.method === "deformGround")).toBe(true);
+      expect(terrain).toHaveBeenCalled();
+    },
+  );
+
+  it.each(["flood", "tsunami"] as const)(
+    "%s applies a gradual corrosion mode alongside water load",
+    (id) => {
+      const { director, calls } = harness();
+      director.launch(id, target, 5);
+      advance(director, 3);
+      expect(calls.some((call) => call.method === "water")).toBe(true);
+      expect(calls.some((call) => call.method === "corrode")).toBe(true);
+    },
+  );
 
   it("does not flash old lightning bolts after the final actual strike", () => {
     const { director, calls } = harness();
@@ -347,7 +397,7 @@ describe("editable disaster settings", () => {
                 : field.max,
       };
       const run = (settings: DisasterSettings) => {
-        const { director, scene, calls, waterSurfaces } = harness();
+        const { director, scene, calls, waterSurfaces } = harness(id === "fire" ? fireFixture() : []);
         director.launch(id, target, 3, settings);
         const initial: unknown[] = [];
         scene.traverse((object) => {
