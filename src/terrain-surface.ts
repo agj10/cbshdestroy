@@ -7,8 +7,10 @@ export interface CraterCut { x: number; z: number; radius: number; depth: number
 export function terrainHeight(cuts: readonly CraterCut[], x: number, z: number): number {
   let height = 0;
   for (const cut of cuts) {
-    const r = Math.hypot(x-cut.x,z-cut.z)/cut.radius;
-    if(r<1) height = Math.min(height, -cut.depth*(1-r*r)**2);
+    const dx=x-cut.x,dz=z-cut.z,angle=Math.atan2(dz,dx);
+    const rim=.87+.08*Math.sin(angle*5+cut.x*.17)+.05*Math.sin(angle*9+cut.z*.23);
+    const r = Math.hypot(dx,dz)/(cut.radius*rim);
+    if(r<1) height = Math.min(height, -cut.depth*(1-r*r)**2*(1-.12*Math.sin(dx*.9)*Math.sin(dz*.7)*r));
   }
   return height;
 }

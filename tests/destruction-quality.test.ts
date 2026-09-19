@@ -1,3 +1,4 @@
+import {destructibleScenery} from '../src/destructible-scenery';
 import {afterEach,describe,it,expect} from 'vitest';
 import * as THREE from 'three';
 import {PhysicsSimulation} from '../src/physics';
@@ -15,6 +16,41 @@ async function setup(parts:CampusPart[]){const sim=await PhysicsSimulation.creat
 function run(sim:PhysicsSimulation,seconds:number,director?:DisasterDirector){for(let i=0;i<seconds*60;i++){director?.update(1/60);sim.step(1/60);}}
 afterEach(()=>{directors.splice(0).forEach(d=>d.dispose());sims.splice(0).forEach(s=>{s.dispose();for(const p of s.parts){p.mesh.geometry.dispose();(p.mesh.material as THREE.Material).dispose();}});});
 describe('destruction quality regressions',()=>{
+ it('breaks campus paving into movable slabs while leaving distant scenery alone',async()=>{
+  const root=new THREE.Group(),road=new THREE.Mesh(new THREE.BoxGeometry(21,.1,7),new THREE.MeshStandardMaterial({color:0x68716d}));road.position.set(40,.05,30);root.add(road);
+  const hill=new THREE.Mesh(new THREE.IcosahedronGeometry(20),new THREE.MeshStandardMaterial());hill.position.set(-150,10,-160);root.add(hill);
+  const parts:CampusPart[]=[];destructibleScenery(root,parts);expect(parts).toHaveLength(3);expect(hill.parent).toBe(root);
+  const {sim,director}=await setup(parts);director.directDestruction('physical',{x:40,y:0,z:30},8,8,.12);run(sim,1);
+  expect(parts.some(p=>sim.getState(p.spec.id)!.detached)).toBe(true);
+ });
+ it('fades older smoke while its size continues growing',()=>{
+  const smoke=new SolidSmoke(new THREE.Group(),()=>.5);const matrix=new THREE.Matrix4(),scale=new THREE.Vector3(),pos=new THREE.Vector3(),q=new THREE.Quaternion();
+  smoke.update(2,1,25,1);smoke.mesh.getMatrixAt(0,matrix);matrix.decompose(pos,q,scale);const earlySize=scale.x,earlyAlpha=smoke.mesh.geometry.getAttribute('puffOpacity').getX(0);
+  smoke.update(8,1,25,1);smoke.mesh.getMatrixAt(0,matrix);matrix.decompose(pos,q,scale);
+  expect(scale.x).toBeGreaterThan(earlySize);expect(smoke.mesh.geometry.getAttribute('puffOpacity').getX(0)).toBeLessThan(earlyAlpha);
+  smoke.mesh.geometry.dispose();(smoke.mesh.material as THREE.Material).dispose();
+ });
+ it('melts hot fuel without igniting it and resets the melt state',async()=>{
+  const fuel=part('melt-fuel',0,1);const {sim,director}=await setup([fuel]);
+  director.directDestruction('melt',{x:0,y:1,z:0},4,10,.2);run(sim,2,director);
+  expect(sim.getState('melt-fuel')!.melting).toBe(true);expect(sim.getBurningParts()).toHaveLength(0);
+  expect(fuel.mesh.children.some(c=>c.name.startsWith('Attached flame'))).toBe(false);
+  sim.reset();expect(sim.getState('melt-fuel')!.melting).toBe(false);
+ });
+ it('places multiple attached fires on one broad surface and sustains combustion',async()=>{
+  const fuel=part('large-fuel',0,1);fuel.spec.size.x=16;fuel.mesh.geometry.dispose();fuel.mesh.geometry=new THREE.BoxGeometry(16,2,1);
+  const {sim,director}=await setup([fuel]);
+  director.directDestruction('burn',{x:-3,y:2,z:0},8,5,.12);
+  director.directDestruction('burn',{x:3,y:2,z:0},8,5,.12);run(sim,12,director);
+  expect(fuel.mesh.children.filter(c=>c.name.startsWith('Attached flame')).length).toBeGreaterThanOrEqual(2);
+  expect(sim.getState('large-fuel')!.erosion).toBeLessThan(1);
+ });
+ it('physical destruction also excavates and leaves irregular crater edges',async()=>{
+  const {director}=await setup([]);let changes=0;director.onTerrainImpact=()=>changes++;
+  director.directDestruction('physical',{x:0,y:0,z:0},8,5,.12);expect(changes).toBe(1);
+  const cuts=[makeCut({x:0,y:0,z:0},10,4)];
+  expect(terrainHeight(cuts,8,0)).not.toBeCloseTo(terrainHeight(cuts,0,8),3);
+ });
  it('drags a selected structural object with physical forces and releases it to gravity',async()=>{
   const {sim}=await setup([part('grabbed',0,1,'column'),part('above',0,5,'slab',['grabbed'])]);
   expect(sim.beginGrab('missing',{x:0,y:1,z:0})).toBe(false);
@@ -52,20 +88,21 @@ describe('destruction quality regressions',()=>{
   expect(fuel.filter(p=>sim.getState(p.spec.id)!.temperature>185)).toHaveLength(3);
   expect(sim.getState('flying')!.temperature).toBe(20);
  });
- it('renders varied opaque smoke clusters with a single instanced draw',()=>{
+ it('renders varied smoke clusters that fade by age without shrinking',()=>{
   const parent=new THREE.Group();let seed=1;const smoke=new SolidSmoke(parent,()=>((seed=seed*16807%2147483647)/2147483647));
   smoke.update(6,2,15,1);const material=smoke.mesh.material as THREE.MeshStandardMaterial;
-  expect(material.transparent).toBe(false);expect(material.opacity).toBe(1);expect(parent.children).toHaveLength(1);
+  expect(material.transparent).toBe(true);expect(material.opacity).toBe(1);expect(parent.children).toHaveLength(1);
   const scales=new Set<number>(),matrix=new THREE.Matrix4(),position=new THREE.Vector3(),rotation=new THREE.Quaternion(),scale=new THREE.Vector3();
   for(let i=0;i<smoke.mesh.count;i++){smoke.mesh.getMatrixAt(i,matrix);matrix.decompose(position,rotation,scale);if(scale.x>.001)scales.add(Math.round(scale.x*100));}
-  expect(scales.size).toBeGreaterThan(8);smoke.mesh.geometry.dispose();material.dispose();
+  expect(scales.size).toBeGreaterThan(8);
+  const opacity=smoke.mesh.geometry.getAttribute("puffOpacity");expect(Array.from(opacity.array).some(v=>v>0&&v<.8)).toBe(true);smoke.mesh.geometry.dispose();material.dispose();
  });
 
  it('extracts a below-grade rounded density surface, including overlapping cuts',()=>{
   const cuts=[makeCut({x:12,y:0,z:12},8,3),makeCut({x:15,y:0,z:12},4,4)];
   const geometry=terrainChunk(cuts,0,0),p=geometry.attributes.position;
   const heights=Array.from({length:p.count},(_,i)=>p.getY(i));
-  expect(Math.min(...heights)).toBeLessThan(-3.8);expect(terrainHeight(cuts,15,12)).toBe(-4);
+  expect(Math.min(...heights)).toBeLessThan(-3.5);expect(terrainHeight(cuts,15,12)).toBe(-4);
   expect(heights.every(Number.isFinite)).toBe(true);geometry.dispose();
  });
  it('lets debris fall below the original flat ground and restores ground on reset',async()=>{

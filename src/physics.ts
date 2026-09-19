@@ -1,5 +1,5 @@
 import { applySurfaceWear, type WearUniforms } from "./surface-wear";
-import { affectedTiles, makeCut, terrainChunk, terrainHeight, TILE, type CraterCut } from "./terrain-surface";
+import { affectedTiles, makeCut, terrainHeight, TILE, type CraterCut } from "./terrain-surface";
 import RAPIER from "@dimforge/rapier3d-compat";
 import * as THREE from "three";
 import type { CampusPart, PartKind, PhysicsStats, Vec3 } from "./types";
@@ -56,6 +56,7 @@ export interface PartPhysicsState {
   readonly corrosion: number;
   readonly erosion: number;
   readonly mutation: number;
+  readonly melting: boolean;
   readonly position: Vec3;
   readonly velocity: Vec3;
 }
@@ -74,6 +75,7 @@ interface PartRecord {
   wear: WearUniforms[];
   erosion: number;
   mutation: number;
+  melting: boolean;
   originalGeometry: THREE.BufferGeometry;
   part: CampusPart;
   body: RAPIER.RigidBody;
@@ -226,7 +228,7 @@ export class PhysicsSimulation {
       const record: PartRecord = {
         lastDustTime: -1,
         wear: materials.map(applySurfaceWear),
-        erosion: 0, mutation: 0, originalGeometry: mesh.geometry,
+        erosion: 0, mutation: 0, melting: false, originalGeometry: mesh.geometry,
         part,
         body,
         collider,
@@ -609,6 +611,8 @@ export class PhysicsSimulation {
         p.z - center.z,
       );
       if (distance < radius) {
+        record.melting = false;
+        if(record.burnTime > 0) this.erode(record, Math.min(.018, amount * .00025), 0x514b43);
         record.temperature = Math.min(
           1_200,
           record.temperature + amount * 18 * (1 - distance / radius),
@@ -686,6 +690,7 @@ export class PhysicsSimulation {
       const p=record.body.translation(),distance=Math.hypot(p.x-center.x,p.y-center.y,p.z-center.z);
       if(distance>=radius || record.erosion>=1)continue;
       const dose=amount*(1-distance/radius);
+      record.melting=true;
       record.temperature=Math.min(1200,record.temperature+dose*1600);
       if(record.temperature>650){
         this.erode(record,dose*.6,0xe87b32);
@@ -752,11 +757,14 @@ export class PhysicsSimulation {
     for(const [x,z] of affectedTiles(cut)) {
       const key=x+','+z, old=this.groundTiles.get(key);
       if(old)this.world.removeCollider(old,true);
-      const geometry=terrainChunk(this.terrainCuts,x,z);
-      const vertices=new Float32Array(geometry.attributes.position.array);
-      const indices=Uint32Array.from({length:vertices.length/3},(_,i)=>i);
-      this.groundTiles.set(key,this.world.createCollider(RAPIER.ColliderDesc.trimesh(vertices,indices).setFriction(.9)));
-      geometry.dispose();
+      // Same sampled height field as the visual surface, without a large triangle contact mesh.
+      const cells=25,heights=new Float32Array((cells+1)*(cells+1));
+      for(let col=0;col<=cells;col++)for(let row=0;row<=cells;row++)
+        heights[row+col*(cells+1)]=terrainHeight(this.terrainCuts,x*TILE+col/cells*TILE,z*TILE+row/cells*TILE);
+      this.groundTiles.set(key,this.world.createCollider(
+        RAPIER.ColliderDesc.heightfield(cells,cells,heights,{x:TILE,y:1,z:TILE})
+          .setTranslation((x+.5)*TILE,0,(z+.5)*TILE).setFriction(.9)));
+
     }
     for(const record of this.records){
       const p=record.body.translation(),bottom=p.y-record.part.spec.size.y/2;
@@ -779,7 +787,7 @@ export class PhysicsSimulation {
       );
       const ignition = material.ignition ?? material.heatLimit * 1.18;
       const burning =
-        combustible && record.temperature >= ignition && record.erosion < 1;
+        combustible && !record.melting && record.temperature >= ignition && record.erosion < 1;
       if (burning) {
         record.burnTime += dt;
         record.temperature = Math.min(1_050, record.temperature + 135 * dt);
@@ -806,7 +814,7 @@ export class PhysicsSimulation {
       // different rates, so a fire first weakens local joins and only then causes
       // gravity-driven support failures. This deliberately avoids blast-like release.
       if (burning && record.burnTime > 1.2) {
-        this.erode(record, dt * (record.part.spec.kind === "wood" ? .065 : .033), 0x514b43);
+        this.erode(record, dt * (record.part.spec.kind === "wood" ? .022 : .012), 0x514b43);
         const charRate =
           record.part.spec.kind === "wood"
             ? 0.035
@@ -984,6 +992,7 @@ export class PhysicsSimulation {
       corrosion: record.corrosion,
       erosion: record.erosion,
       mutation: record.mutation,
+      melting: record.melting,
       position: { ...record.body.translation() },
       velocity: { ...record.body.linvel() },
     };
@@ -1003,7 +1012,7 @@ export class PhysicsSimulation {
       const material = MATERIALS[kind];
       const ignition = material.ignition ?? material.heatLimit * 1.18;
       if (
-        combustible &&
+        combustible && !record.melting &&
         record.erosion < 1 &&
         record.temperature >= ignition
       )
@@ -1037,7 +1046,7 @@ export class PhysicsSimulation {
       const kind = record.part.spec.kind;
       const combustible = kind === "wood" || kind === "detail" || kind === "roof";
       const ignition = MATERIALS[kind].ignition ?? MATERIALS[kind].heatLimit * 1.18;
-      if (combustible && record.temperature >= ignition && record.erosion < 1)
+      if (combustible && !record.melting && record.temperature >= ignition && record.erosion < 1)
         burning++;
     }
     return {

@@ -55,7 +55,7 @@ $("#app").innerHTML = `
         <label for="brush-strength">강도 <output id="brush-strength-value">5</output></label>
         <input id="brush-strength" type="range" min="1" max="10" step="1" value="5" />
         <button class="launch-button" id="direct-toggle" aria-pressed="false">직접 파괴 켜기</button>
-        <p class="selection-description">켜면 클릭·드래그로 파괴해요. 끄거나 Esc를 누르면 화면을 다시 움직일 수 있어요.</p>
+        <p class="selection-description">좌클릭을 누르거나 드래그하면 계속 적용해요. 우클릭으로 회전하고 휠 클릭으로 화면을 옮겨요.</p>
       </section>
     </aside>
     <section class="viewport" aria-label="학교 3D 시뮬레이션">
@@ -79,7 +79,7 @@ $("#app").innerHTML = `
     </section>
   </main>
   <footer class="transport"><div class="playback"><button id="pause-button" class="round-button" title="일시정지 (Space)" aria-label="일시정지">${icon("pause", 16)}</button><button id="reset-button" class="icon-button" title="캠퍼스 초기화 (R)" aria-label="캠퍼스 초기화">${icon("reset", 18)}</button><span class="transport-divider"></span><span class="clock-display" id="elapsed">00:00.0</span><span class="time-label">SIM TIME</span></div><div class="speed-controls" role="group" aria-label="시뮬레이션 속도"><span>재생 속도</span>${[0.25, 0.5, 1, 2].map((s) => `<button data-speed="${s}" class="speed-button ${s === 1 ? "active" : ""}">${s}×</button>`).join("")}</div><div class="footer-right"><span id="fps">60 FPS</span><button class="icon-button" id="sound-button" title="효과음 켜기" aria-label="효과음 켜기">${icon("mute", 18)}</button><button class="export-button" id="export-button">${icon("download", 16)}<span>3D 모델</span></button></div></footer>
-  <dialog id="info-dialog"><button class="dialog-close icon-button" aria-label="닫기">${icon("close")}</button><span class="eyebrow">ABOUT THIS EXPERIMENT</span><h2>작은 캠퍼스, 커다란 실험.</h2><p>충북과학고등학교 사진을 바탕으로 만든 재난 샌드박스예요. 재난을 선택하고, 강도를 조절하고, 달라지는 캠퍼스를 자유롭게 관찰하세요.</p><div class="help-grid"><span>시점 회전</span><b>왼쪽 드래그 / 손가락 하나</b><span>화면 이동</span><b>오른쪽 드래그 / 손가락 둘</b><span>확대 · 축소</span><b>마우스 휠 / 핀치</b><span>직접 파괴</span><b>직접 파괴 카테고리 → 유형 선택 → 켜기</b><span>카메라 조작으로 복귀</span><b>직접 파괴 끄기 / Esc</b><span>실행 · 일시정지 · 초기화</span><b>Enter · Space · R</b></div><h3>모델과 물리에 관하여</h3><p>회색 외벽, 주황색 장식, 천문대 돔은 제공 사진을 반영했어요. 보이지 않는 뒷면과 별동, 운동장 세부 배치와 치수는 추정이에요. 2023년 현대화사업 이후 외관을 기준으로 삼았으며 2026년의 모든 변경을 확인한 실측 모델은 아니에요.</p><p>중력·충돌·마찰은 Rapier 물리 엔진으로, 구조 연결의 파손·열·물은 간략한 게임 모델로 계산해요. 실제 학교의 안전성이나 재난 피해를 예측하는 도구는 아니에요. 블랙홀·외계 침공·중력 반전은 가상 규칙을 사용해요.</p><p>3D 모델 버튼은 <b>현재 장면</b>을 GLB 파일로 저장해요. 온전한 모델은 초기화한 뒤 저장하세요.</p><a href="https://school.cbe.go.kr/cbs-h/M010202/" target="_blank" rel="noreferrer">학교 공식 연혁 ↗</a><a href="https://www.cbe.go.kr/news/na/ntt/selectNttInfo.do?mi=10301&nttSn=1517999" target="_blank" rel="noreferrer">공식 전경 참고자료 ↗</a></dialog>
+  <dialog id="info-dialog"><button class="dialog-close icon-button" aria-label="닫기">${icon("close")}</button><span class="eyebrow">ABOUT THIS EXPERIMENT</span><h2>작은 캠퍼스, 커다란 실험.</h2><p>충북과학고등학교 사진을 바탕으로 만든 재난 샌드박스예요. 재난을 선택하고, 강도를 조절하고, 달라지는 캠퍼스를 자유롭게 관찰하세요.</p><div class="help-grid"><span>시점 회전</span><b>우클릭 드래그 / 손가락 하나</b><span>화면 이동</span><b>휠 클릭 드래그 / 손가락 둘</b><span>확대 · 축소</span><b>마우스 휠 / 핀치</b><span>직접 파괴</span><b>직접 파괴 카테고리 → 유형 선택 → 좌클릭</b><span>일반 재난</span><b>선택 후 원하는 곳을 좌클릭</b><span>실행 · 일시정지 · 초기화</span><b>Enter · Space · R</b></div><h3>모델과 물리에 관하여</h3><p>회색 외벽, 주황색 장식, 천문대 돔은 제공 사진을 반영했어요. 보이지 않는 뒷면과 별동, 운동장 세부 배치와 치수는 추정이에요. 2023년 현대화사업 이후 외관을 기준으로 삼았으며 2026년의 모든 변경을 확인한 실측 모델은 아니에요.</p><p>중력·충돌·마찰은 Rapier 물리 엔진으로, 구조 연결의 파손·열·물은 간략한 게임 모델로 계산해요. 실제 학교의 안전성이나 재난 피해를 예측하는 도구는 아니에요. 블랙홀·외계 침공·중력 반전은 가상 규칙을 사용해요.</p><p>3D 모델 버튼은 <b>현재 장면</b>을 GLB 파일로 저장해요. 온전한 모델은 초기화한 뒤 저장하세요.</p><a href="https://school.cbe.go.kr/cbs-h/M010202/" target="_blank" rel="noreferrer">학교 공식 연혁 ↗</a><a href="https://www.cbe.go.kr/news/na/ntt/selectNttInfo.do?mi=10301&nttSn=1517999" target="_blank" rel="noreferrer">공식 전경 참고자료 ↗</a></dialog>
   <dialog id="settings-dialog"><button class="dialog-close icon-button" aria-label="닫기">${icon("close")}</button><span class="eyebrow">PREFERENCES</span><h2>나에게 맞는 실험실</h2><label class="setting-row">그래픽 품질<select id="quality"><option value="high">높음 · 부드러운 그림자</option><option value="low">낮음 · 성능 우선</option></select></label><label class="setting-row">충격 시 카메라 흔들림<input type="checkbox" id="shake" checked /></label><label class="setting-row">파손 먼지<input type="checkbox" id="dust-effects" checked /></label><label class="setting-row">지면 굴착<input type="checkbox" id="terrain-effects" checked /></label><p>지면 굴착을 끄면 새 구덩이가 생기지 않아요. 기존 구덩이는 초기화하면 복원돼요.</p><p>느린 기기에서는 그래픽 품질과 재생 속도를 낮춰보세요. 여러 재난은 동시에 최대 4개까지 실행할 수 있어요.</p></dialog>
   <dialog id="disaster-settings-dialog" class="disaster-settings-dialog" aria-labelledby="detail-title" aria-describedby="detail-introduction">
     <div class="detail-header"><div><span class="eyebrow">DESIGN YOUR DISASTER</span><h2 id="detail-title">운석 충돌 세부 설정</h2><p id="detail-introduction">설정은 재난마다 따로 저장되며, 다음 실행부터 적용돼요.</p></div><button type="button" class="dialog-close icon-button" aria-label="세부 설정 닫기">${icon("close")}</button></div>
@@ -365,7 +365,7 @@ function drawDisasters() {
     const tool=DESTRUCTION_TOOLS.find(tool=>tool.id===directTool)!;
     $("#direct-name").textContent=tool.name;$("#direct-description").textContent=tool.description;
     for(const selector of ['#brush-radius','#brush-strength','label[for="brush-radius"]','label[for="brush-strength"]']) $(selector).hidden = directTool === "grab";
-    document.querySelectorAll<HTMLButtonElement>('[data-destruction]').forEach(button=>button.onclick=()=>{stopGrab();brushDragging=false;directTool=button.dataset.destruction as DestructionTool;brushPoint=null;drawDisasters();});
+    document.querySelectorAll<HTMLButtonElement>('[data-destruction]').forEach(button=>button.onclick=()=>{stopGrab();brushDragging=false;directTool=button.dataset.destruction as DestructionTool;brushPoint=null;syncDirectMode();drawDisasters();});
     return;
   }
   $("#disaster-grid").innerHTML = DISASTERS.filter(
@@ -404,6 +404,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-category]").forEach(
     (b.onclick = () => {
       setDirectMode(false);
       category = b.dataset.category!;
+      syncDirectMode();
       document
         .querySelectorAll<HTMLButtonElement>("[data-category]")
         .forEach((c) => {
@@ -538,6 +539,8 @@ controls.maxDistance = 1000;
 controls.maxPolarAngle = Math.PI * 0.48;
 controls.minPolarAngle = 0.045;
 controls.enablePan = true;
+controls.mouseButtons = { LEFT: null as unknown as THREE.MOUSE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+renderer.domElement.addEventListener('contextmenu', event => event.preventDefault());
 const hemi = new THREE.HemisphereLight(0xe3f4ff, 0x747e60, 2.3);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffe2b6, 3.2);
@@ -644,7 +647,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach(
       else if (b.dataset.view === "top") camera.position.set(18, 295, 8.1);
       else if (b.dataset.view === "wide") camera.position.set(340, 310, 430);
       else camera.position.set(160, 145, 205);
-      if (!directModeEnabled) controls.update();
+      controls.update();
     }),
 );
 function setAiming(value: boolean) {
@@ -701,64 +704,19 @@ const pointerPoint = (event: PointerEvent) => {
 const canUseDirectMode = () =>
   ready && category === "직접 파괴";
 function syncDirectMode() {
-  const available = canUseDirectMode();
-  if (!available && directModeEnabled) {
-    stopGrab();
-    directModeEnabled = false;
-    brushDragging = false;
-    controls.enabled = true;
-    if (!aiming) {
-      $("#target-hint").hidden = true;
-      targetMarker.visible =
-        targetPreview && selected !== "earthquake" && selected !== "flood";
-      renderer.domElement.style.cursor = "grab";
-    }
-  }
-  const directButton = $("#direct-toggle");
-  directButton.setAttribute("aria-pressed", String(directModeEnabled));
-  directButton.textContent = directModeEnabled ? "직접 파괴 끄기" : "직접 파괴 켜기";
-  const button = $<HTMLButtonElement>("#realtime-attack-toggle");
-  button.disabled = !available;
-  button.classList.toggle("active", directModeEnabled);
-  button.setAttribute("aria-pressed", String(directModeEnabled));
-  button.title = available
-    ? directModeEnabled
-      ? "직접 파괴를 끄고 화면 조작으로 돌아가기"
-      : "켜면 화면 조작 대신 왼쪽 클릭·드래그로 재난 조작하기"
-    : "‘직접 파괴’ 카테고리에서 파괴 유형을 선택하세요";
-  button.querySelector("span")!.textContent = directModeEnabled
-    ? "직접 파괴 켜짐"
-    : "직접 파괴";
-  if (!directModeEnabled) {
-    controls.enabled = true;
-    if (!aiming) {
-      $("#target-hint").hidden = true;
-      renderer.domElement.style.cursor = "grab";
-    }
-  }
+  directModeEnabled = canUseDirectMode();
+  controls.enabled = true;
+  $('#direct-toggle').hidden = true;
+  $('#realtime-attack-toggle').hidden = true;
+  $('#target-hint').hidden = false;
+  $('#target-hint-message').textContent = '좌클릭: 실행·누르고 연속 적용 · 우클릭: 회전 · 휠: 확대 · 휠 드래그: 이동';
+  $('#target-hint kbd').textContent = '';
+  renderer.domElement.style.cursor = grabPointer !== null ? 'grabbing' : directTool === 'grab' && directModeEnabled ? 'grab' : 'crosshair';
 }
-function setDirectMode(value: boolean) {
-  stopGrab();
-  brushPoint = null;
-  directModeEnabled = value && canUseDirectMode();
-  brushDragging = false;
-  controls.enabled = !directModeEnabled;
-  if (directModeEnabled) {
-    aiming = false;
-    $("#target-button").classList.remove("active");
-    targetMarker.visible =
-      targetPreview && selected !== "earthquake" && selected !== "flood";
-    $("#target-hint-message").textContent =
-      directTool === "grab" ? "잡아 옮기기 · 물체를 끌고, 놓으면 떨어뜨려요" : "직접 파괴 켜짐 · 왼쪽 클릭·드래그로 선택한 파괴를 적용해요";
-    $("#target-hint kbd").textContent = "Esc 끄기";
-    $("#target-hint").hidden = false;
-    renderer.domElement.style.cursor = "crosshair";
-  }
+function setDirectMode(_value: boolean) {
+  stopGrab(); brushPoint = null; brushDragging = false;
   syncDirectMode();
 }
-$("#realtime-attack-toggle").onclick = () =>
-  setDirectMode(!directModeEnabled);
-$("#direct-toggle").onclick = () => setDirectMode(!directModeEnabled);
 for(const field of ["radius","strength"]){
   const input=$<HTMLInputElement>('#brush-'+field);
   input.oninput=()=>$('#brush-'+field+'-value').textContent=input.value+(field==='radius'?' m':'');
@@ -772,7 +730,9 @@ const updateBrushPoint = (event: PointerEvent) => {
 };
 renderer.domElement.addEventListener("pointerdown", (e) => {
   down = { x: e.clientX, y: e.clientY };
-  if (directModeEnabled && canUseDirectMode() && e.button === 0) {
+  if (!ready || e.button !== 0) return;
+  if (aiming) return;
+  if (canUseDirectMode()) {
     if (directTool === "grab") {
       if (paused) {toast("재생 중에 조각을 잡아 옮길 수 있어요.");return;}
       pointerPoint(e);
@@ -789,6 +749,9 @@ renderer.domElement.addEventListener("pointerdown", (e) => {
     updateBrushPoint(e);
     applyBrush(); brushClock=0;
     e.preventDefault();
+  } else {
+    const point = pointerPoint(e);
+    if (point) { setTarget(point); launch(); }
   }
 });
 renderer.domElement.addEventListener("pointermove", (e) => {
@@ -799,12 +762,19 @@ renderer.domElement.addEventListener("pointermove", (e) => {
     if (target) simulation.moveGrab(target);
     e.preventDefault();return;
   }
-  if (brushDragging) {
+  if (brushDragging && e.buttons === 1) {
+    const previous = brushPoint?.clone();
     updateBrushPoint(e);
+    if(previous && brushPoint && directTool === "burn") {
+      const next=brushPoint.clone(), steps=Math.min(24,Math.ceil(previous.distanceTo(next)/1.2));
+      for(let i=1;i<=steps;i++){brushPoint=previous.clone().lerp(next,i/steps);applyBrush();}
+      brushPoint=next;
+    }
     e.preventDefault();
   }
 });
 renderer.domElement.addEventListener("pointerup", (e) => {
+  if(e.button !== 0)return;
   if(grabPointer===e.pointerId){stopGrab();return;}
   if (brushDragging) {
     brushDragging = false;
@@ -860,7 +830,7 @@ function reset() {
 }
 function launch() {
   if (!ready) return;
-  if(category === "직접 파괴"){setDirectMode(!directModeEnabled);return;}
+  if(category === "직접 파괴")return;
   const draft = drafts[selected];
   const snapshot = {
     id: selected,
@@ -1082,7 +1052,7 @@ function frame(now: number) {
     }
     if (steps === 6) accumulator = Math.min(accumulator, 1 / 60);
   }
-  if (!directModeEnabled) controls.update();
+  controls.update();
   if (targetMarker.visible) {
     const pulse = 1 + Math.sin(now * 0.006) * 0.07;
     targetMarker.scale.setScalar(pulse);

@@ -1,3 +1,4 @@
+import { destructibleScenery } from './destructible-scenery.ts';
 import { batchStaticScenery } from "./static-scenery.ts";
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
@@ -1125,6 +1126,7 @@ export function buildCampus(batchScenery = true): Campus {
     for (const batch of batches) for (const copied of batch) copied.dispose();
     for (const batch of batchGeometries) batch?.dispose();
   }
+  destructibleScenery(group,parts);
   if (batchScenery) batchStaticScenery(group, new Set(parts.map(part => part.mesh)));
   return { group, parts };
 }

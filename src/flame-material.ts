@@ -18,18 +18,23 @@ export function smokeTexture(): THREE.DataTexture {
   texture.magFilter=THREE.LinearFilter;texture.minFilter=THREE.LinearFilter;return texture;
 }
 
+/** Broad-based turbulent tongues, with a hot inner core instead of a leaf silhouette. */
 export function stylizedFlameGeometry(height:number,width:number,variant=.5):THREE.BufferGeometry {
   const positions:number[]=[],colors:number[]=[];
-  const rings=[[0,.5],[.16+variant*.12,1],[.48+variant*.12,.55+variant*.2],[.78,.16+variant*.18],[1,0]];
-  for(let ring=0;ring<4;ring++)for(let side=0;side<5;side++){
-    const vertex=(r:number,k:number)=>{
-      const [y,radius]=rings[r],angle=k/5*Math.PI*2+variant*2;
-      return [Math.cos(angle)*radius*width+y*y*width*(variant*1.6-.5),y*height,Math.sin(angle)*radius*width];
-    };
-    for(const [r,k] of [[ring,side],[ring,side+1],[ring+1,side],[ring+1,side],[ring,side+1],[ring+1,side+1]]){
-      positions.push(...vertex(r,k));
-      const color=new THREE.Color(r<2?0xffc34a:r<3?0xff8527:0xee481b);
-      colors.push(color.r,color.g,color.b);
+  const profiles=[[0,1],[.2,.94],[.42,.66],[.62,.44],[.82,.23],[1,0]];
+  for(let branch=0;branch<3;branch++){
+    const h=height*(branch===0?1:.5+variant*.23),w=width*(branch===0?1:.6);
+    const offset=(branch-1)*width*.65;
+    for(let ring=0;ring<profiles.length-1;ring++)for(let side=0;side<7;side++){
+      const vertex=(r:number,k:number)=>{
+        const [y,radius]=profiles[r],angle=k/7*Math.PI*2;
+        const bend=Math.sin(y*4+variant*6+branch)*y*y*w*.8;
+        return [offset+Math.cos(angle)*radius*w+bend,y*h,Math.sin(angle)*radius*w*.9];
+      };
+      for(const [r,k] of [[ring,side],[ring,side+1],[ring+1,side],[ring+1,side],[ring,side+1],[ring+1,side+1]]){
+        positions.push(...vertex(r,k));
+        const color=new THREE.Color(r<2?0xffdc73:r<4?0xff991e:0xf14c0b);colors.push(color.r,color.g,color.b);
+      }
     }
   }
   const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));geometry.computeVertexNormals();return geometry;

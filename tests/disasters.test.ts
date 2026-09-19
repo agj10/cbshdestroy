@@ -42,6 +42,7 @@ function harness(parts: CampusPart[] = []) {
     getBurningParts: () => [],
     blast: record("blast"),
     heat: record("heat"),
+    melt: record("melt"),
     igniteRemnants: record("igniteRemnants"),
     mutate: record("mutate"),
     earthquake: record("earthquake"),
@@ -296,13 +297,28 @@ describe("disaster lifecycles", () => {
     },
   );
 
+  it('advances lava from the clicked crater and melts only its visible trail',()=>{
+    const {director,scene,calls}=harness();const origin={x:40,y:0,z:70};director.launch('volcano',origin,5);
+    const cone=scene.children.find(child=>child.name==='Volcanic cone and crater')!;
+    expect(cone.position.x).toBe(origin.x);expect(cone.position.z).toBe(origin.z);
+    advance(director,.5);expect(calls.filter(call=>call.method==='melt')).toHaveLength(0);
+    advance(director,1.5);
+    const early=calls.filter(call=>call.method==='melt' && call.args[1]===8);
+    expect(early.length).toBeGreaterThan(0);
+    expect(early.every(call=>Math.hypot((call.args[0] as Vec3).x-origin.x,(call.args[0] as Vec3).z-origin.z)<35)).toBe(true);
+    advance(director,14);
+    const flows:THREE.Mesh[]=[];cone.traverse(child=>{if(child.name==='Advancing lava flow')flows.push(child as THREE.Mesh);});
+    expect(flows).toHaveLength(3);expect(flows.every(flow=>flow.geometry.drawRange.count>200)).toBe(true);
+    expect(calls.some(call=>call.method==='melt' && call.args[1]===8 && Math.hypot((call.args[0] as Vec3).x-4,(call.args[0] as Vec3).z+19.5)<12)).toBe(true);
+  });
+
   it.each(["hail", "volcano"] as const)(
     "waits for %s projectiles to arrive before applying damage",
     (id) => {
       const { director, calls } = harness();
       director.launch(id, target, 3);
       advance(director, 2);
-      expect(calls).toHaveLength(0);
+      expect(calls.filter(call=>call.method === "blast")).toHaveLength(0);
       advance(director, 3);
       expect(calls.some((call) => call.method === "blast")).toBe(true);
       const impacts = calls.filter((call) => call.method === "blast");
@@ -581,7 +597,7 @@ describe("disaster / Rapier integration", () => {
       sim.step(1 / 60);
       for (const part of structural) {
         const state = sim.getState(part.spec.id)!;
-        expectFinite(numericValues(state));
+        if(!numericValues(state).every(Number.isFinite))throw new Error(`Nonfinite state for ${part.spec.id}`);
         if (
           Math.hypot(
             state.position.x - part.spec.position.x,
