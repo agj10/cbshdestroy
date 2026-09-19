@@ -1,10 +1,11 @@
+import { batchStaticScenery } from "./static-scenery.ts";
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { Campus, CampusPart, PartKind, PartSpec } from "./types";
 
 // Photo-derived front elevations. Rear volumes and grounds are approximate.
 // One scene unit represents one metre; all physics bodies use the same origin.
-export function buildCampus(): Campus {
+export function buildCampus(batchScenery = true): Campus {
   const group = new THREE.Group();
   group.name = "Chungbuk Science High School · remodeled exterior";
   const parts: CampusPart[] = [];
@@ -100,10 +101,10 @@ export function buildCampus(): Campus {
     ((randomState = (randomState * 16807) % 2147483647) - 1) / 2147483646;
 
   // Foundation landscape and paved paths remain terrain rather than building debris.
-  box(group, 0, -0.52, 4, 300, 1, 240, palette.grass);
-  box(group, 0, -0.012, 40, 96, 0.08, 58, 0xbdc2af);
-  box(group, 0, 0.038, 40, 87, 0.045, 48, palette.field);
-  box(group, -1, 0.042, 40, 81, 0.04, 42, 0xafac80);
+  box(group, 0, -0.52, 4, 720, 1, 620, palette.grass);
+  box(group, 4, -0.012, 32, 62, 0.08, 80, palette.asphalt);
+  box(group, 4, 0.038, 32, 52, 0.045, 70, palette.field).name = "school-field";
+  box(group, 4, 0.042, 32, 48, 0.04, 66, 0xafac80);
   box(group, 11, 0.04, -9, 79, 0.08, 7, 0xc7c8b9);
   box(group, -26, 0.04, -1, 5, 0.08, 33, 0xc7c8b9);
   box(group, 50, 0.025, 39, 5, 0.07, 93, 0xbec4b2);
@@ -121,9 +122,9 @@ export function buildCampus(): Campus {
   const transform = new THREE.Object3D();
   for (let i = 0; i < 55; i++) {
     transform.position.set(
-      (random() - 0.5) * 77,
+      4 + (random() - 0.5) * 43,
       0.067 + i * 0.00002,
-      21 + random() * 37,
+      2 + random() * 60,
     );
     transform.rotation.set(-Math.PI / 2, 0, random() * Math.PI);
     transform.scale.set(0.8 + random() * 4.8, 0.5 + random() * 1.6, 1);
@@ -143,27 +144,29 @@ export function buildCampus(): Campus {
     return box(group, x, 0.09, z, sx, 0.025, sz, color);
   }
   // The field in the supplied photographs is grass/dirt, without an athletics track.
-  fieldLine(0, 20, 79, 0.1);
-  fieldLine(0, 60, 79, 0.1);
-  fieldLine(-39.5, 40, 0.1, 40);
-  fieldLine(39.5, 40, 0.1, 40);
-  fieldLine(0, 40, 0.08, 40);
-  for (const direction of [-1, 1]) {
-    fieldLine(direction * 30, 40, 0.08, 23);
-    fieldLine(direction * 34.7, 28.5, 9.5, 0.08);
-    fieldLine(direction * 34.7, 51.5, 9.5, 0.08);
+  fieldLine(4, 0, 46, 0.1);
+  fieldLine(4, 64, 46, 0.1);
+  fieldLine(-19, 32, 0.1, 64);
+  fieldLine(27, 32, 0.1, 64);
+  fieldLine(4, 32, 46, 0.08);
+  for (const end of [0, 64]) {
+    const inner = end === 0 ? 10 : 54;
+    fieldLine(4, inner, 23, 0.08);
+    fieldLine(-7.5, (end + inner) / 2, 0.08, 10);
+    fieldLine(15.5, (end + inner) / 2, 0.08, 10);
   }
   const centerRing = new THREE.Mesh(
     new THREE.RingGeometry(6.1, 6.19, 64),
     material(0xe2dfc5),
   );
   centerRing.rotation.x = -Math.PI / 2;
-  centerRing.position.set(0, 0.095, 40);
+  centerRing.position.set(4, 0.095, 32);
   group.add(centerRing);
 
   function goal(x: number, sign: number) {
     const goalGroup = new THREE.Group();
-    goalGroup.position.set(x, 0, 40);
+    goalGroup.position.set(4, 0, x);
+    goalGroup.rotation.y = -Math.PI / 2;
     group.add(goalGroup);
     const white = 0xe3e6db;
     box(goalGroup, 0, 1.22, -3.7, 0.13, 2.44, 0.13, white);
@@ -190,26 +193,26 @@ export function buildCampus(): Campus {
     );
     goalGroup.add(net);
   }
-  goal(-39.5, -1);
-  goal(39.5, 1);
+  goal(0, -1);
+  goal(64, 1);
 
-  // Multipurpose court (added in 2023), placement inferred from the available views.
-  box(group, -63, 0.055, 34, 18, 0.12, 31, 0xbf8a70);
-  box(group, -63, 0.125, 34, 15, 0.025, 28, 0x628e87);
+  // Eastern multipurpose court, north of the tennis courts in the supplied satellite view.
+  box(group, 76, 0.055, 5, 18, 0.12, 31, 0xbf8a70);
+  box(group, 76, 0.125, 5, 15, 0.025, 28, 0x628e87);
   const courtLine = (x: number, z: number, sx: number, sz: number) =>
     box(group, x, 0.151, z, sx, 0.025, sz, 0xe2dfc5);
-  courtLine(-70.5, 34, 0.08, 28);
-  courtLine(-55.5, 34, 0.08, 28);
-  courtLine(-63, 20, 15, 0.08);
-  courtLine(-63, 48, 15, 0.08);
-  courtLine(-63, 34, 15, 0.08);
-  for (const z of [21.5, 46.5]) {
-    box(group, -63, 1.8, z, 0.14, 3.6, 0.14, 0xced5d2);
+  courtLine(68.5, 5, 0.08, 28);
+  courtLine(83.5, 5, 0.08, 28);
+  courtLine(76, -9, 15, 0.08);
+  courtLine(76, 19, 15, 0.08);
+  courtLine(76, 5, 15, 0.08);
+  for (const z of [-7.5, 17.5]) {
+    box(group, 76, 1.8, z, 0.14, 3.6, 0.14, 0xced5d2);
     box(
       group,
-      -63,
+      76,
       3.15,
-      z + (z < 30 ? 0.45 : -0.45),
+      z + (z < 5 ? 0.45 : -0.45),
       1.8,
       1.1,
       0.09,
@@ -220,9 +223,39 @@ export function buildCampus(): Campus {
       material(palette.orange),
     );
     hoop.rotation.x = Math.PI / 2;
-    hoop.position.set(-63, 2.85, z + (z < 30 ? 0.78 : -0.78));
+    hoop.position.set(76, 2.85, z + (z < 5 ? 0.78 : -0.78));
     group.add(hoop);
   }
+
+  const tennis = new THREE.Group();
+  tennis.name = "tennis-courts";
+  tennis.position.set(74, 0, 43);
+  group.add(tennis);
+  box(tennis, 0, 0.06, 0, 34, 0.12, 35, 0x6b9866);
+  for (const x of [-8, 8]) {
+    box(tennis, x, 0.13, 0, 13, 0.025, 27, 0x577b93);
+    const line = (px: number, pz: number, sx: number, sz: number) => box(tennis, x + px, 0.155, pz, sx, 0.02, sz, 0xe2e7d6);
+    for (const side of [-1, 1]) {
+      line(side * 5.5, 0, 0.07, 23.8);
+      line(side * 4.1, 0, 0.055, 23.8);
+      line(0, side * 11.9, 11, 0.07);
+      line(0, side * 6.4, 8.2, 0.07);
+      box(tennis, x + side * 6, 0.65, 0, 0.1, 1.3, 0.1, 0xe0e5dc);
+    }
+    line(0, 0, 0.06, 12.8);
+    box(tennis, x, 0.7, 0, 12, 0.045, 0.04, 0xe4e9df);
+    for (let y = 0.25; y < 0.7; y += 0.12) box(tennis, x, y, 0, 12, 0.012, 0.012, 0x465b53);
+    for (let dx = -6; dx <= 6; dx += 0.4) box(tennis, x + dx, 0.46, 0, 0.012, 0.48, 0.012, 0x465b53);
+  }
+  for (let x = -17; x <= 17; x += 3.4) for (const z of [-17.5, 17.5]) box(tennis, x, 1.65, z, 0.08, 3.3, 0.08, 0x557563);
+  for (let z = -17.5; z <= 17.5; z += 3.5) for (const x of [-17, 17]) box(tennis, x, 1.65, z, 0.08, 3.3, 0.08, 0x557563);
+  for (const y of [0.3, 1.6, 3.2]) {
+    for (const z of [-17.5, 17.5]) box(tennis, 0, y, z, 34, 0.04, 0.04, 0x557563);
+    for (const x of [-17, 17]) box(tennis, x, y, 0, 0.04, 0.04, 35, 0x557563);
+  }
+  box(group, 74, 0.02, 84, 39, 0.08, 38, 0xb3ae97).name = "south-parking";
+  box(group, 40, 0.015, 47, 6, 0.07, 112, palette.asphalt);
+  box(group, 3, 0.015, 70.5, 80, 0.07, 6, palette.asphalt);
 
   interface WingOptions {
     name: string;
@@ -627,6 +660,49 @@ export function buildCampus(): Campus {
     floors: 3,
   });
 
+  // Approximate footprints from the supplied north-up satellite image and 2024 road views.
+  building({ name: "dorm-white", x: -40, z: 45, bays: 10, bay: 6, depth: 14, floors: 4, rotation: Math.PI / 2 });
+  // The white footprint returns across the south end of the field (a ㄷ-shaped complex).
+  building({ name: "dorm-white-return", x: -28, z: 80, bays: 5, bay: 8, depth: 10, floors: 4 });
+  building({ name: "dorm-white-stair", x: -52, z: 80, bays: 1, bay: 8, depth: 10, floors: 4 });
+  // Orange-roof dorm closes the end, outside the playing field and perimeter path.
+  building({ name: "dorm-orange", x: -7, z: 92, bays: 6, bay: 6, depth: 14, floors: 3 });
+  building({ name: "dorm-orange-return", x: 16, z: 95, bays: 4, bay: 6, depth: 10, floors: 3, rotation: Math.PI / 2 });
+  building({ name: "creative", x: 29, z: -51, bays: 7, bay: 6, depth: 14, floors: 3 });
+  building({ name: "creative-rear", x: 32, z: -68, bays: 5, bay: 6, depth: 12, floors: 3, rotation: -0.25 });
+  // Enclosed links preserve the rear wing shapes while joining the whole complex.
+  building({ name: "creative-main-link", x: 12, z: -38, bays: 2, bay: 5, depth: 12, floors: 3 });
+  building({ name: "creative-annex-link", x: 47, z: -42.75, bays: 1, bay: 6, depth: 2.5, floors: 3 });
+  building({ name: "creative-rear-link", x: 30, z: -61, bays: 2, bay: 5, depth: 6, floors: 3 });
+  // Vertical dormitory accent panels are owned by the facade bodies and fall with them.
+  for (const { spec, mesh } of parts) {
+    if (spec.id.startsWith("dorm-orange") && spec.id.includes("-wall-")) {
+      const side = spec.id.endsWith("--1") ? -1 : 1;
+      box(mesh, 1.8, 0, side * 0.17, 1.25, spec.size.y, 0.07, 0xd28b61);
+    }
+    if (spec.id.startsWith("dorm-white") && spec.id.includes("-wall-")) {
+      const side = spec.id.endsWith("--1") ? -1 : 1;
+      box(mesh, 0, -0.8, side * 0.17, 2.5, 0.55, 0.06, 0xd6b66b);
+    }
+  }
+  // Hipped roofs are divided into strips owned by the corresponding roof bodies.
+  for (const [name, bays, depth] of [["dorm-orange", 6, 14], ["dorm-orange-return", 4, 10]] as const) {
+    for (let i = 0; i < bays; i++) {
+      const roof = roofMeshes.get(name + "-" + i)!;
+      const geometry = new THREE.BoxGeometry(6, 0.2, depth + 0.5, 1, 1, 2);
+      const positions = geometry.getAttribute("position");
+      for (let vertex = 0; vertex < positions.count; vertex++) {
+        const x = positions.getX(vertex), z = positions.getZ(vertex);
+        const roofRise = Math.max(0, Math.min(2.1, (bays * 3 - Math.abs(-(bays - 1) * 3 + i * 6 + x)) * 0.32, (depth / 2 + 0.25 - Math.abs(z)) * 0.32));
+        positions.setY(vertex, positions.getY(vertex) + 0.55 + roofRise);
+      }
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(geometry, material(0x916b50));
+      mesh.castShadow = true;
+      roof.add(mesh);
+    }
+  }
+
   // Roof machinery, railings and observatory domes belong to roof bodies.
   function roofBox(
     key: string,
@@ -713,8 +789,8 @@ export function buildCampus(): Campus {
   observatory("west-5", 2.75, 0.4);
   observatory("west-7", 1.65, 0.5);
 
-  // Rooftop solar panels on the inferred eastern annex.
-  for (const key of ["annex-0", "annex-1", "annex-2"]) {
+  // Solar arrays on the large rear creative wing, visible in the supplied satellite view.
+  for (const key of ["creative-0", "creative-1", "creative-2", "creative-3", "creative-4", "creative-5", "creative-6"]) {
     const roof = roofMeshes.get(key)!;
     for (let row = 0; row < 3; row++) {
       const panel = box(
@@ -788,17 +864,17 @@ export function buildCampus(): Campus {
   // Trees use a handful of instanced draw calls, leaving room for physical debris.
   type Tree = { x: number; z: number; scale: number; variant: number };
   const trees: Tree[] = [];
-  for (let i = 0; i < 230; i++) {
+  for (let i = 0; i < 410; i++) {
     let x: number, z: number;
-    if (i < 115) {
+    if (i < 180) {
       x = (random() - 0.5) * 265;
-      z = -62 - random() * 43;
-    } else if (i < 180) {
-      x = -91 - random() * 42;
-      z = -45 + random() * 137;
+      z = -89 - random() * 65;
+    } else if (i < 340) {
+      x = -65 - random() * 110;
+      z = -80 + random() * 170;
     } else {
-      x = 87 + random() * 40;
-      z = -48 + random() * 144;
+      x = -58 - random() * 25;
+      z = -40 + random() * 125;
     }
     trees.push({
       x,
@@ -894,12 +970,12 @@ export function buildCampus(): Campus {
 
   // Faceted forested ridgelines reproduce the sheltered mountain campus setting.
   const hillGeometry = new THREE.IcosahedronGeometry(1, 2);
-  const hills = new THREE.InstancedMesh(hillGeometry, material(0x718769), 13);
-  for (let i = 0; i < 13; i++) {
+  const hills = new THREE.InstancedMesh(hillGeometry, material(0x718769), 21);
+  for (let i = 0; i < 21; i++) {
     transform.position.set(
-      -170 + i * 29,
+      i < 13 ? -220 + i * 34 : -185 - random() * 35,
       -13 - random() * 8,
-      -118 - random() * 27,
+      i < 13 ? -175 - random() * 40 : -110 + (i - 13) * 35,
     );
     transform.rotation.set(0, random() * 6.28, 0);
     transform.scale.set(
@@ -920,6 +996,21 @@ export function buildCampus(): Campus {
   }
   hills.receiveShadow = true;
   group.add(hills);
+
+  // Nearby agricultural parcels: east is open farmland, west and north are wooded.
+  const fields = new THREE.Group();
+  fields.name = "surrounding-farmland";
+  group.add(fields);
+  const cropColors = [0x919b65, 0xa4a279, 0x788b59, 0xaaa184, 0x859779];
+  for (let row = 0; row < 7; row++) for (let col = 0; col < 4; col++) {
+    const x = 130 + col * 52, z = -130 + row * 47;
+    box(fields, x, 0.025, z, 47, 0.06, 41, cropColors[(row + col * 2) % cropColors.length]);
+    for (let strip = -20; strip <= 20; strip += 4) box(fields, x + strip, 0.065, z, 0.24, 0.025, 40, 0x9ba27c);
+    box(fields, x + 25, 0.01, z, 1.2, 0.045, 47, 0x6a837d);
+  }
+  box(group, 101, 0.01, 20, 4, 0.07, 350, palette.asphalt);
+  box(group, 206, 0.01, 105, 210, 0.07, 4, palette.asphalt);
+  box(group, 206, 0.01, -59, 210, 0.07, 3, 0xb9b59b);
 
   // Parking bay paint and unoccupied cars provide familiar objects for scale.
   for (let i = 0; i <= 7; i++)
@@ -952,9 +1043,9 @@ export function buildCampus(): Campus {
   ])
     car(x, -9, color);
   for (const [x, z] of [
-    [-45, 17],
+    [-27, 17],
     [45, 17],
-    [-45, 61],
+    [-27, 61],
     [45, 61],
     [45, -15],
     [-21, -7],
@@ -1034,5 +1125,6 @@ export function buildCampus(): Campus {
     for (const batch of batches) for (const copied of batch) copied.dispose();
     for (const batch of batchGeometries) batch?.dispose();
   }
+  if (batchScenery) batchStaticScenery(group, new Set(parts.map(part => part.mesh)));
   return { group, parts };
 }

@@ -568,7 +568,8 @@ export class DisasterDirector {
     const states=(this.sim as Partial<PhysicsSimulation>).getState;
     if(!states)return;
     const burning=new Set<string>();
-    for(const part of this.sim.parts){
+    const candidates = this.sim.getHeatedParts?.(185) ?? this.sim.parts;
+    for(const part of candidates){
       if(!["wood","detail","roof","wall","glass"].includes(part.spec.kind))continue;
       const state=states.call(this.sim,part.spec.id);
       if(!state || state.erosion>=1 || state.temperature<185 || !part.mesh.visible)continue;

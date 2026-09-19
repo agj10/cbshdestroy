@@ -42,7 +42,7 @@ campus.group.userData = {
     "Photo-based approximation of remodeled Chungbuk Science High School campus. Not surveyed or engineering-validated.",
   units: "metres",
   reference:
-    "User-supplied photographs and Chungbuk Office of Education 2024 publication. Unseen elevations and grounds inferred.",
+    "User-supplied aerial photographs, satellite layout and January 2024 road views; layout corrected September 19, 2026. Dimensions and unseen elevations inferred.",
   structuralParts: campus.parts.length,
 };
 for (const part of campus.parts) part.mesh.userData = { ...part.spec };

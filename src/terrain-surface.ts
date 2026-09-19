@@ -21,15 +21,29 @@ export function affectedTiles(cut: CraterCut): Array<[number,number]> {
     for(let z=Math.max(-10,Math.floor((cut.z-cut.radius)/TILE));z<=Math.min(9,Math.floor((cut.z+cut.radius)/TILE));z++) tiles.push([x,z]);
   return tiles;
 }
+// Physics and rendering request the same terrain after each impact. Keep one bounded
+// generation cache, returning independent buffers so either caller may dispose safely.
+let cachedCuts = "";
+const chunkCache = new Map<string, THREE.BufferGeometry>();
 /** Sample a signed density volume and extract its zero surface with Marching Cubes. */
 export function terrainChunk(cuts: readonly CraterCut[], tx:number,tz:number):THREE.BufferGeometry {
+  const signature = cuts.map(cut => [cut.x, cut.z, cut.radius, cut.depth].join(",")).join(";");
+  if (signature !== cachedCuts) {
+    for (const geometry of chunkCache.values()) geometry.dispose();
+    chunkCache.clear(); cachedCuts = signature;
+  }
+  const key = tx + "," + tz;
+  const cached = chunkCache.get(key);
+  if (cached) return cached.clone();
   const n=28, span=n-3, material=new THREE.MeshStandardMaterial();
   const mc=new MarchingCubes(n,material,false,false,12000);
   mc.isolation=80;
+  const heights = new Float64Array(n * n);
+  for(let z=0;z<n;z++) for(let x=0;x<n;x++)
+    heights[x+z*n]=terrainHeight(cuts,tx*TILE+(x-1)/span*TILE,tz*TILE+(z-1)/span*TILE);
   for(let z=0;z<n;z++) for(let y=0;y<n;y++) for(let x=0;x<n;x++) {
-    const wx=tx*TILE+(x-1)/span*TILE, wz=tz*TILE+(z-1)/span*TILE;
     const wy=-6+(y-1)/span*8;
-    mc.field[x+y*n+z*n*n]=80+(terrainHeight(cuts,wx,wz)-wy)*10;
+    mc.field[x+y*n+z*n*n]=80+(heights[x+z*n]-wy)*10;
   }
   mc.update();
   const count=mc.geometry.drawRange.count, pos=mc.geometry.attributes.position;
@@ -46,5 +60,11 @@ export function terrainChunk(cuts: readonly CraterCut[], tx:number,tz:number):TH
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(array,3));
   geo.setAttribute('color',new THREE.BufferAttribute(colors,3));geo.computeVertexNormals();
   const smooth=mergeVertices(geo);smooth.computeVertexNormals();const result=smooth.toNonIndexed();
-  geo.dispose();smooth.dispose();mc.geometry.dispose();material.dispose();return result;
+  geo.dispose();smooth.dispose();mc.geometry.dispose();material.dispose();
+  if (chunkCache.size >= 100) {
+    const oldest = chunkCache.keys().next().value!;
+    chunkCache.get(oldest)!.dispose();chunkCache.delete(oldest);
+  }
+  chunkCache.set(key,result.clone());
+  return result;
 }

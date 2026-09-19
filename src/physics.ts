@@ -85,6 +85,7 @@ interface PartRecord {
   corrosion: number;
   detached: boolean;
   impactSpeed: number;
+  renderSleeping: boolean;
   unsupportedFor: number;
   collapseDelay: number;
   supports: PartRecord[];
@@ -235,6 +236,7 @@ export class PhysicsSimulation {
         corrosion: 0,
         detached: false,
         impactSpeed: 0,
+        renderSleeping: false,
         unsupportedFor: 0,
         collapseDelay: 0.26 + stableHash(spec.id) * 0.5,
         supports: [],
@@ -299,10 +301,11 @@ export class PhysicsSimulation {
       this.accumulator -= FIXED_DT;
       this.elapsed += FIXED_DT;
       for (const record of this.dynamicRecords) {
+        if (record.body.isSleeping() || !record.body.isEnabled()) {record.impactSpeed = 0;continue;}
         const velocity = record.body.linvel();
         record.impactSpeed = Math.hypot(velocity.x, velocity.y, velocity.z);
       }
-      this.world.step(this.events);
+      if (this.dynamicRecords.size > 0) this.world.step(this.events);
       this.processContacts();
       for (const record of this.dynamicRecords) this.boundMotion(record);
       this.supportClock += FIXED_DT;
@@ -314,6 +317,10 @@ export class PhysicsSimulation {
         this.updateAppearance();
       }
       for (const record of this.dynamicRecords) {
+        if (!record.body.isEnabled()) continue;
+        const sleeping = record.body.isSleeping();
+        if (sleeping && record.renderSleeping) continue;
+        record.renderSleeping = sleeping;
         const position = record.body.translation();
         record.part.mesh.position.set(position.x, position.y, position.z);
         record.part.mesh.quaternion.copy(record.body.rotation());
@@ -373,6 +380,7 @@ export class PhysicsSimulation {
 
   /** Keep combined disasters within the CCD solver's supported speed range. */
   private boundMotion(record: PartRecord): void {
+    if (record.body.isSleeping() || !record.body.isEnabled()) return;
     const linear = record.body.linvel();
     const speed = Math.hypot(linear.x, linear.y, linear.z);
     // Add collision substeps only once a fast disaster needs them.
@@ -711,6 +719,7 @@ export class PhysicsSimulation {
     // Apply spread simultaneously so array order cannot make heat traverse a whole building in one tick.
     const transfers = new Map<PartRecord, number>();
     for (const record of this.records) {
+      if (record.temperature === AMBIENT_TEMPERATURE) continue;
       const material = MATERIALS[record.part.spec.kind];
       const combustible = ["wood", "detail", "roof"].includes(
         record.part.spec.kind,
@@ -902,6 +911,12 @@ export class PhysicsSimulation {
         }
       }
     }
+  }
+
+  /** Avoid requesting Rapier transforms for every cold object just to discover visible fires. */
+  getHeatedParts(minimumTemperature = 185): readonly CampusPart[] {
+    if (this.disposed) return [];
+    return this.records.filter(record => record.temperature >= minimumTemperature && record.erosion < 1).map(record => record.part);
   }
 
   getState(id: string): PartPhysicsState | undefined {

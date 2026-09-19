@@ -594,7 +594,8 @@ describe("disaster / Rapier integration", () => {
     ).length;
     expect(detached / structural.length).toBeGreaterThan(0.95);
     expect(far.size).toBeGreaterThan(5);
-  }, 30_000);
+  // More campus bodies require additional time for the same nine simulated seconds.
+  }, 60_000);
 
   it("default meteor produces a visible local collapse while preserving most of the campus", async () => {
     const campus = buildCampus();

@@ -500,7 +500,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xb6c9ce);
 scene.fog = new THREE.Fog(0xb6c9ce, 280, 1250);
 const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2000);
-camera.position.set(126, 105, 158);
+camera.position.set(160, 145, 205);
 let renderer: THREE.WebGLRenderer;
 try {
   renderer = new THREE.WebGLRenderer({
@@ -638,11 +638,11 @@ document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach(
       document
         .querySelectorAll("[data-view]")
         .forEach((c) => c.classList.toggle("active", c === b));
-      controls.target.set(0, 2, 6);
-      if (b.dataset.view === "front") camera.position.set(15, 28, 133);
-      else if (b.dataset.view === "top") camera.position.set(0, 205, 6.1);
+      controls.target.set(18, 2, 8);
+      if (b.dataset.view === "front") camera.position.set(15, 37, 188);
+      else if (b.dataset.view === "top") camera.position.set(18, 295, 8.1);
       else if (b.dataset.view === "wide") camera.position.set(340, 310, 430);
-      else camera.position.set(126, 105, 158);
+      else camera.position.set(160, 145, 205);
       if (!directModeEnabled) controls.update();
     }),
 );

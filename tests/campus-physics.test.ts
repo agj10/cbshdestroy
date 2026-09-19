@@ -36,10 +36,39 @@ afterEach(() => {
 });
 
 describe("complete campus physics integration", () => {
+  it("includes structurally destructible dormitories and rear creative wings outside the playing field", async () => {
+    const { campus, simulation } = await completeCampus();
+    const field = new THREE.Box3().setFromObject(campus.group.getObjectByName("school-field")!);
+    const size = field.getSize(new THREE.Vector3());
+    expect(size.x / size.z).toBeCloseTo(0.74, 1);
+    const tennis = new THREE.Box3().setFromObject(campus.group.getObjectByName("tennis-courts")!);
+    expect(tennis.min.x).toBeGreaterThan(field.max.x);
+    expect(campus.group.getObjectByName("surrounding-farmland")).toBeDefined();
+    for (const wing of ["dorm-white", "dorm-orange", "creative", "creative-rear"]) {
+      const members = campus.parts.filter(({ spec }) => spec.id.startsWith(wing + "-"));
+      expect(members.length).toBeGreaterThan(70);
+      expect(members.some(({ spec }) => spec.anchored)).toBe(true);
+      const bounds = new THREE.Box3();
+      for (const member of members) {
+        const memberBounds = new THREE.Box3().setFromObject(member.mesh);
+        expect(memberBounds.intersectsBox(field), member.spec.id).toBe(false);
+        bounds.union(memberBounds);
+      }
+      const center = bounds.getCenter(new THREE.Vector3());
+      simulation.blast(center, 14, 300);
+      expect(members.some(({ spec }) => simulation.getState(spec.id)!.detached)).toBe(true);
+      simulation.reset();
+    }
+  });
+
   it("keeps all campus parts stable at rest and fully restores them after a destructive run", async () => {
     const { campus, simulation } = await completeCampus();
     expect(campus.parts.length).toBeGreaterThan(500);
-    expect(campus.parts.length).toBeLessThanOrEqual(750);
+    const ids = new Set(campus.parts.map(({ spec }) => spec.id));
+    expect(ids.size).toBe(campus.parts.length);
+    for (const { spec } of campus.parts) {
+      for (const support of spec.supports) expect(ids.has(support)).toBe(true);
+    }
     const initialTransforms = campus.parts.map(({ mesh }) => ({
       position: mesh.position.clone(),
       rotation: mesh.quaternion.clone(),
