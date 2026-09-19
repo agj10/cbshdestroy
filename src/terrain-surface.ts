@@ -13,7 +13,7 @@ export function terrainHeight(cuts: readonly CraterCut[], x: number, z: number):
   return height;
 }
 export function makeCut(center: Vec3, radius: number, depth: number): CraterCut {
-  return {x:center.x,z:center.z,radius:THREE.MathUtils.clamp(radius,2,80),depth:THREE.MathUtils.clamp(depth,.12,4)};
+  return {x:center.x,z:center.z,radius:THREE.MathUtils.clamp(radius,2,80),depth:THREE.MathUtils.clamp(depth,.12,14)};
 }
 export function affectedTiles(cut: CraterCut): Array<[number,number]> {
   const tiles:Array<[number,number]>=[];
@@ -38,11 +38,12 @@ export function terrainChunk(cuts: readonly CraterCut[], tx:number,tz:number):TH
   const n=28, span=n-3, material=new THREE.MeshStandardMaterial();
   const mc=new MarchingCubes(n,material,false,false,12000);
   mc.isolation=80;
+  const localCuts = cuts.filter(cut=>cut.x+cut.radius>=tx*TILE-2 && cut.x-cut.radius<=(tx+1)*TILE+2 && cut.z+cut.radius>=tz*TILE-2 && cut.z-cut.radius<=(tz+1)*TILE+2);
   const heights = new Float64Array(n * n);
   for(let z=0;z<n;z++) for(let x=0;x<n;x++)
-    heights[x+z*n]=terrainHeight(cuts,tx*TILE+(x-1)/span*TILE,tz*TILE+(z-1)/span*TILE);
+    heights[x+z*n]=terrainHeight(localCuts,tx*TILE+(x-1)/span*TILE,tz*TILE+(z-1)/span*TILE);
   for(let z=0;z<n;z++) for(let y=0;y<n;y++) for(let x=0;x<n;x++) {
-    const wy=-6+(y-1)/span*8;
+    const wy=-18+(y-1)/span*20;
     mc.field[x+y*n+z*n*n]=80+(heights[x+z*n]-wy)*10;
   }
   mc.update();
@@ -51,14 +52,14 @@ export function terrainChunk(cuts: readonly CraterCut[], tx:number,tz:number):TH
   const soil=new THREE.Color(0x69533c), dry=new THREE.Color(0x97815c);
   for(let i=0;i<count;i++) {
     const x=tx*TILE+((pos.getX(i)+1)*n/2-1)/span*TILE;
-    const y=-6+((pos.getY(i)+1)*n/2-1)/span*8;
+    const y=-18+((pos.getY(i)+1)*n/2-1)/span*20;
     const z=tz*TILE+((pos.getZ(i)+1)*n/2-1)/span*TILE;
     array.set([x,y,z],i*3);
     const color=soil.clone().lerp(dry,Math.max(0,1+y/3)*.5);
     colors.set([color.r,color.g,color.b],i*3);
   }
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(array,3));
-  geo.setAttribute('color',new THREE.BufferAttribute(colors,3));geo.computeVertexNormals();
+  geo.setAttribute('color',new THREE.BufferAttribute(colors,3));
   const smooth=mergeVertices(geo);smooth.computeVertexNormals();const result=smooth.toNonIndexed();
   geo.dispose();smooth.dispose();mc.geometry.dispose();material.dispose();
   if (chunkCache.size >= 100) {

@@ -1,6 +1,7 @@
+import { SolidSmoke } from "./solid-smoke";
 import { FractureDust } from "./fracture-dust";
 import type { DestructionTool } from "./destruction-tools";
-import { stylizedFlameGeometry, smokeTexture } from "./flame-material";
+import { stylizedFlameGeometry } from "./flame-material";
 import * as THREE from "three";
 import type { PhysicsSimulation } from "./physics";
 import type { CampusPart, Vec3 } from "./types";
@@ -205,6 +206,7 @@ interface Effect {
   fired: boolean;
   seed: number;
   flashUntil?: number;
+  secondaryFireDone?: boolean;
   approach?: THREE.Vector3;
   travelTime?: number;
   strikes: number;
@@ -234,19 +236,12 @@ interface Projectile {
   heat: number;
 }
 
-interface FireSmokePuff {
-  mesh: THREE.Mesh | THREE.Sprite;
-  material: THREE.MeshStandardMaterial | THREE.SpriteMaterial;
-  phase: number;
-  offset: THREE.Vector3;
-}
-
 interface FireVisual {
   part: CampusPart;
   group: THREE.Group;
   outerFlames: THREE.Mesh[];
   innerFlames: THREE.Mesh[];
-  smoke: FireSmokePuff[];
+  smoke: SolidSmoke;
   seed: number;
   age: number;
 }
@@ -259,7 +254,7 @@ interface VolcanoVisual {
   magmaMaterial: THREE.MeshStandardMaterial;
   lava: THREE.Mesh[];
   lavaMaterials: THREE.MeshStandardMaterial[];
-  plume: FireSmokePuff[];
+  plume: SolidSmoke;
   ventRocks: THREE.Mesh[];
 }
 const UP = new THREE.Vector3(0, 1, 0);
@@ -279,7 +274,6 @@ export class DisasterDirector {
   private particleMesh: THREE.InstancedMesh;
   private dummy = new THREE.Object3D();
   private surfaceFires = new Map<string, FireVisual>();
-  private smokeMap = smokeTexture();
   private waterMesh: THREE.Mesh;
   private waterAligned = false;
   private waterCrest = { value: -1 };
@@ -290,6 +284,7 @@ export class DisasterDirector {
   private surfaceRay = new THREE.Raycaster();
   onImpact: (strength: number) => void = () => {};
   onEvent: (text: string) => void = () => {};
+  terrainEnabled = true;
   onTerrainImpact: (
     center: Vec3,
     radius: number,
@@ -429,8 +424,8 @@ export class DisasterDirector {
   private createFireVisual(part: CampusPart): FireVisual {
     const group = new THREE.Group();
     group.name = `Attached flame · ${part.spec.id}`;
-    const breadth = Math.max(0.36, Math.min(1.45, part.spec.size.x * 0.18));
-    const depth = Math.max(0.08, Math.min(0.42, part.spec.size.z * 0.46));
+    const breadth = Math.max(0.55, Math.min(2.2, part.spec.size.x * 0.32));
+    const depth = Math.max(0.08, Math.min(2, part.spec.size.z * 0.3));
     // Parent the source to the part so it follows the wall/roof through all later
     // physics motion. The top edge is a readable proxy for interior fuel behind a
     // facade when the model does not contain individual room furnishings.
@@ -443,40 +438,19 @@ export class DisasterDirector {
 
     const outerFlames: THREE.Mesh[] = [];
     const innerFlames: THREE.Mesh[] = [];
-    for (let i = 0; i < 3; i++) {
-      const height = 3.8 + this.random() * 2.2;
-      const geometry = stylizedFlameGeometry(height, .6 + breadth * .3);
+    const tongues = 5 + Math.floor(this.random() * 4);
+    const sourceScale = .65 + this.random() * .9;
+    for (let i = 0; i < tongues; i++) {
+      const height = (1.4 + this.random() * 3.6) * sourceScale;
+      const geometry = stylizedFlameGeometry(height, (.35 + this.random() * .5) * sourceScale, this.random());
       const flame = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.DoubleSide}));
-      flame.position.set((i-1)*breadth*.65,0,(this.random()-.5)*.6);
-      flame.rotation.y = i * Math.PI * .7;
+      flame.position.set((this.random()-.5)*breadth*1.6,0,(this.random()-.5)*depth*1.5);
+      flame.rotation.y = this.random() * Math.PI * 2;
       group.add(flame);
       outerFlames.push(flame);
     }
 
-    const smoke: FireSmokePuff[] = [];
-    for (let i = 0; i < 9; i++) {
-      const material = new THREE.SpriteMaterial({
-        map: this.smokeMap,
-        color: i % 2 === 0 ? 0x303338 : 0x3c3f44,
-        toneMapped: false,
-        transparent: true,
-        opacity: 0.7,
-        depthWrite: false,
-      });
-      const puff = new THREE.Sprite(material);
-      puff.renderOrder = 3;
-      group.add(puff);
-      smoke.push({
-        mesh: puff,
-        material,
-        phase: i / 9,
-        offset: new THREE.Vector3(
-          (this.random() - 0.5) * 0.3,
-          0,
-          (this.random() - 0.5) * 0.3,
-        ),
-      });
-    }
+    const smoke = new SolidSmoke(group, () => this.random());
     part.mesh.add(group);
     return {
       part,
@@ -515,20 +489,7 @@ export class DisasterDirector {
       const flicker = 0.88 + 0.18 * Math.sin(visual.age * (12.3 + i) + visual.seed);
       flame.scale.setScalar((0.72 + heat * 0.5) * flicker * health);
     }
-    for (let i = 0; i < visual.smoke.length; i++) {
-      const puff = visual.smoke[i];
-      const phase = (visual.age * (0.085 + heat * 0.025) + puff.phase) % 1;
-      const rise = 3 + phase * (11 + heat * 7);
-      puff.mesh.position.set(
-        puff.offset.x + Math.sin(visual.age * .3 + i * .5) * (.25 + phase * 1.3),
-        rise,
-        puff.offset.z + Math.cos(visual.age * .26 + i * .5) * (.25 + phase * 1.1),
-      );
-      const size=(5.5 + phase * 11) * (.9 + heat * .35);
-      puff.mesh.scale.set(size,size*.86,1);
-      puff.material.opacity = Math.sin(phase * Math.PI) * .72 * Math.min(1,visual.age*.8);
-      if(puff.material instanceof THREE.SpriteMaterial)puff.material.rotation=Math.sin(visual.age*.18+i)*.18;
-    }
+    visual.smoke.update(visual.age, 1.6 + heat, 10 + heat * 7, .75 + heat * .45 + Math.sin(visual.seed) * .2);
   }
 
   private clearFireVisuals(e: Effect): void {
@@ -570,7 +531,7 @@ export class DisasterDirector {
     const burning=new Set<string>();
     const candidates = this.sim.getHeatedParts?.(185) ?? this.sim.parts;
     for(const part of candidates){
-      if(!["wood","detail","roof","wall","glass"].includes(part.spec.kind))continue;
+      if(!["wood","detail","roof"].includes(part.spec.kind))continue;
       const state=states.call(this.sim,part.spec.id);
       if(!state || state.erosion>=1 || state.temperature<185 || !part.mesh.visible)continue;
       burning.add(part.spec.id);
@@ -647,30 +608,7 @@ export class DisasterDirector {
       lava.push(flow);
       lavaMaterials.push(material);
     }
-    const plume: FireSmokePuff[] = [];
-    for (let i = 0; i < 6; i++) {
-      const material = new THREE.SpriteMaterial({
-        map: this.smokeMap,
-        toneMapped: false,
-        color: i < 2 ? 0x292b2f : 0x3c3e42,
-        transparent: true,
-        opacity: 0.34,
-        depthWrite: false,
-      });
-      const puff = new THREE.Sprite(material);
-      puff.renderOrder = 3;
-      e.group.add(puff);
-      plume.push({
-        mesh: puff,
-        material,
-        phase: i / 6,
-        offset: new THREE.Vector3(
-          (this.random() - 0.5) * rimInner,
-          0,
-          (this.random() - 0.5) * rimInner,
-        ),
-      });
-    }
+    const plume = new SolidSmoke(e.group, () => this.random(), 9);
     const ventRocks: THREE.Mesh[] = [];
     for (let i = 0; i < 10; i++) {
       const angle = (i / 10) * Math.PI * 2 + this.random() * 0.22;
@@ -700,18 +638,7 @@ export class DisasterDirector {
       volcano.lavaMaterials[i].emissiveIntensity = 1.2 + 0.65 * Math.sin(e.age * 3.8 + i);
 
     }
-    for (let i = 0; i < volcano.plume.length; i++) {
-      const puff = volcano.plume[i];
-      const phase = (e.age * 0.095 + puff.phase) % 1;
-      const rise = volcano.height + 0.5 + phase * (15 + e.intensity * 0.75);
-      puff.mesh.position.set(
-        puff.offset.x + Math.sin(e.age * 0.9 + i) * (0.5 + phase * 2.1),
-        rise,
-        puff.offset.z + Math.cos(e.age * 0.72 + i) * (0.5 + phase * 1.8),
-      );
-      puff.mesh.scale.setScalar(5 + phase * 13);
-      puff.material.opacity = Math.sin(phase*Math.PI) * .7 * Math.min(1,e.age*.6);
-    }
+    volcano.plume.update(e.age, volcano.height + .5, 16 + e.intensity, 1.4 + e.intensity * .07);
     for (let i = 0; i < volcano.ventRocks.length; i++)
       volcano.ventRocks[i].rotation.y += dt * (0.12 + i * 0.015);
   }
@@ -927,15 +854,15 @@ export class DisasterDirector {
       direction,
     });
     if (
-      ["meteor", "explosion", "aliens", "plane", "volcano"].includes(
+      this.terrainEnabled && ["meteor", "explosion", "aliens", "plane", "volcano"].includes(
         e.info.id,
       ) &&
       power * gain > 45
     ) {
-      const craterRadius = Math.min(68, Math.max(2.5, reach * 0.42));
-      const craterDepth = Math.min(3.8, 0.16 + Math.sqrt(power * gain) * 0.045);
-      this.sim.deformGround?.(p, craterRadius, craterDepth);
-      this.onTerrainImpact(p, craterRadius, craterDepth, e.info.id);
+      const craterRadius = Math.min(30, Math.max(2.5, reach * 0.25));
+      const craterDepth = Math.min(12, 1.2 + Math.sqrt(power * gain) * 0.2);
+      if (this.sim.deformGround?.(p, craterRadius, craterDepth) !== false)
+        this.onTerrainImpact(p, craterRadius, craterDepth, e.info.id);
     }
     this.burst(
       p,
@@ -991,11 +918,6 @@ export class DisasterDirector {
         (4 + s * 1.4) * Math.sqrt(number(e, "beam")),
         (15 + s * 5) * number(e, "beam"),
       );
-      this.sim.heat(
-        hit,
-        (5 + s) * Math.sqrt(number(e, "beam")) * gain ** 0.4,
-        15 * number(e, "beam") * gain,
-      );
       const source = craft
           .getWorldPosition(new THREE.Vector3())
           .addScaledVector(UP, -2),
@@ -1037,7 +959,7 @@ export class DisasterDirector {
   }
   directDestruction(mode: DestructionTool, point: Vec3, radius: number, strength: number, dt: number): void {
     if(this.disposed || !finite(point) || ![radius,strength,dt].every(Number.isFinite) || radius<=0 || strength<=0 || dt<=0)return;
-    radius=THREE.MathUtils.clamp(radius,1,30);strength=THREE.MathUtils.clamp(strength,1,20);dt=Math.min(dt,.2);
+    radius=THREE.MathUtils.clamp(radius,1,30);strength=THREE.MathUtils.clamp(strength,1,10);dt=Math.min(dt,.2);
     const p=new THREE.Vector3(point.x,point.y,point.z);
     if(mode === "physical"){
       this.sim.blast(p,radius,14*strength, {impulseScale:1.2});
@@ -1053,8 +975,8 @@ export class DisasterDirector {
       this.sim.corrode(p,radius,dt*strength*.05,surface);
       this.burst(p,10,0x90d5e2,4,.8,9.81,.15);
     }else if(mode === "excavate"){
-      const depth=Math.min(4,.5+strength*.18);
-      this.sim.deformGround(p,radius,depth);this.onTerrainImpact(p,radius,depth,"direct");
+      const depth=Math.min(10,1+strength*.65);
+      if (this.terrainEnabled && this.sim.deformGround(p,radius,depth) !== false) this.onTerrainImpact(p,radius,depth,"direct");
       this.burst(p,10,0x82704e,2,.7,9.81,.18);
     }
   }
@@ -1175,16 +1097,12 @@ export class DisasterDirector {
                 -Math.sin(THREE.MathUtils.degToRad(number(e, "angle"))),
               ),
           );
-          this.sim.heat(
-            p,
-            (12 + s * 2) * size ** 0.65 * gain ** 0.4,
-            25 *
-              speed *
-              gain *
-              (e.settings.composition === "ice" ? 0.1 : density ** 0.25),
-          );
           this.onEvent("운석 충돌 · 충격파 전파");
         }
+      }
+      if (id === "meteor" && e.fired && !e.secondaryFireDone && t > e.travelTime! + 3) {
+        e.secondaryFireDone = true;
+        if (e.settings.composition !== "ice") this.sim.igniteRemnants?.(p, 9 + number(e,"diameter") * .8, 5);
       }
       if (id === "explosion" && !e.fired) {
         e.fired = true;
@@ -1664,7 +1582,6 @@ export class DisasterDirector {
     if (this.disposed) return;
     this.reset();
     this.disposed = true;
-    this.smokeMap.dispose();
     this.dust.dispose();
     this.particleMesh.removeFromParent();
     this.particleMesh.geometry.dispose();

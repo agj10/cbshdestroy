@@ -1,4 +1,5 @@
 export const DESTRUCTION_TOOLS = [
+  {id:'grab',name:'잡아 옮기기',icon:'target',description:'건물이나 잔해를 클릭한 채 끌어 옮겨요. 놓으면 중력에 따라 떨어져요.'},
   {id:'physical',name:'물리 파괴',icon:'burst',description:'충격으로 구조를 부수고 잔해를 밀어내요.'},
   {id:'burn',name:'연소',icon:'flame',description:'표면에 불을 붙여 태우고 지지력을 약화해요.'},
   {id:'corrosion',name:'부식',icon:'droplets',description:'부식 단계를 높여 표면부터 바스러뜨려요.'},

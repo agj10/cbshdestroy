@@ -4,6 +4,8 @@ import {PhysicsSimulation} from '../src/physics';
 import {DisasterDirector} from '../src/disasters';
 import {terrainChunk,terrainHeight,makeCut} from '../src/terrain-surface';
 import type {CampusPart,PartKind} from '../src/types';
+import {SolidSmoke} from '../src/solid-smoke';
+import {VoxelTerrain} from '../src/voxel-terrain';
 const sims:PhysicsSimulation[]=[],directors:DisasterDirector[]=[];
 function part(id:string,x:number,y:number,kind:PartKind='wood',supports:string[]=[]):CampusPart{
  const mesh=new THREE.Mesh(new THREE.BoxGeometry(1,2,1),new THREE.MeshStandardMaterial({color:0xeeeeee}));mesh.position.set(x,y,0);
@@ -13,6 +15,52 @@ async function setup(parts:CampusPart[]){const sim=await PhysicsSimulation.creat
 function run(sim:PhysicsSimulation,seconds:number,director?:DisasterDirector){for(let i=0;i<seconds*60;i++){director?.update(1/60);sim.step(1/60);}}
 afterEach(()=>{directors.splice(0).forEach(d=>d.dispose());sims.splice(0).forEach(s=>{s.dispose();for(const p of s.parts){p.mesh.geometry.dispose();(p.mesh.material as THREE.Material).dispose();}});});
 describe('destruction quality regressions',()=>{
+ it('drags a selected structural object with physical forces and releases it to gravity',async()=>{
+  const {sim}=await setup([part('grabbed',0,1,'column'),part('above',0,5,'slab',['grabbed'])]);
+  expect(sim.beginGrab('missing',{x:0,y:1,z:0})).toBe(false);
+  expect(sim.beginGrab('grabbed',{x:0,y:1,z:0})).toBe(true);
+  sim.moveGrab({x:8,y:10,z:0});run(sim,2);
+  const held=sim.getState('grabbed')!;expect(held.position.x).toBeGreaterThan(6);expect(held.position.y).toBeGreaterThan(8);
+  expect(sim.getState('above')!.detached).toBe(true);
+  sim.endGrab();run(sim,1);expect(sim.getState('grabbed')!.position.y).toBeLessThan(held.position.y-2);
+  sim.reset();sim.moveGrab({x:20,y:30,z:0});run(sim,1);expect(sim.getState('grabbed')!.position.x).toBe(0);expect(sim.getState('grabbed')!.detached).toBe(false);
+ });
+
+ it('keeps deep excavation visible and lets debris settle below the original surface',async()=>{
+  const {sim}=await setup([part('deep-debris',12,1)]);
+  expect(sim.deformGround({x:12,y:0,z:0},8,9)).toBe(true);
+  expect(sim.deformGround({x:12,y:0,z:0},8,9)).toBe(false);
+  run(sim,3);expect(sim.getState('deep-debris')!.position.y).toBeLessThan(-6);
+  const terrain=new VoxelTerrain();const cover=new THREE.Mesh(new THREE.PlaneGeometry(20,20),new THREE.MeshStandardMaterial());cover.castShadow=true;
+  terrain.bindSurface(cover);expect(cover.castShadow).toBe(false);
+  terrain.impact({x:12,y:0,z:0},8,9,'test');expect(terrain.heightAt(12,0)).toBe(-9);
+  terrain.impact({x:12,y:0,z:0},8,9,'test');expect(terrain.craterCount).toBe(1);
+  expect(terrain.group.children.every(child=>child.castShadow)).toBe(true);terrain.dispose();cover.geometry.dispose();(cover.material as THREE.Material).dispose();
+ });
+ it('turns off terrain changes for both direct tools and meteor impacts',async()=>{
+  const {sim,director}=await setup([part('base',0,1,'column')]);let changes=0;director.onTerrainImpact=()=>changes++;director.terrainEnabled=false;
+  director.directDestruction('excavate',{x:0,y:0,z:0},8,10,.12);
+  expect(sim.getState('base')!.detached).toBe(false);
+  director.launch('meteor',{x:0,y:0,z:0},10);run(sim,5,director);expect(changes).toBe(0);
+  director.terrainEnabled=true;director.directDestruction('excavate',{x:0,y:0,z:0},8,10,.12);expect(changes).toBe(1);
+ });
+ it('ignites only a small subset of nearby fuel, excluding fast airborne debris',async()=>{
+  const fuel=Array.from({length:12},(_,i)=>part('remnant-'+i,i-6,1));const flying=part('flying',20,5);
+  const {sim}=await setup([...fuel,flying]);sim.blast({x:19.8,y:5,z:0},1,300);
+  expect(Math.hypot(...Object.values(sim.getState('flying')!.velocity))).toBeGreaterThan(4);
+  sim.igniteRemnants({x:0,y:0,z:0},30,3);
+  expect(fuel.filter(p=>sim.getState(p.spec.id)!.temperature>185)).toHaveLength(3);
+  expect(sim.getState('flying')!.temperature).toBe(20);
+ });
+ it('renders varied opaque smoke clusters with a single instanced draw',()=>{
+  const parent=new THREE.Group();let seed=1;const smoke=new SolidSmoke(parent,()=>((seed=seed*16807%2147483647)/2147483647));
+  smoke.update(6,2,15,1);const material=smoke.mesh.material as THREE.MeshStandardMaterial;
+  expect(material.transparent).toBe(false);expect(material.opacity).toBe(1);expect(parent.children).toHaveLength(1);
+  const scales=new Set<number>(),matrix=new THREE.Matrix4(),position=new THREE.Vector3(),rotation=new THREE.Quaternion(),scale=new THREE.Vector3();
+  for(let i=0;i<smoke.mesh.count;i++){smoke.mesh.getMatrixAt(i,matrix);matrix.decompose(position,rotation,scale);if(scale.x>.001)scales.add(Math.round(scale.x*100));}
+  expect(scales.size).toBeGreaterThan(8);smoke.mesh.geometry.dispose();material.dispose();
+ });
+
  it('extracts a below-grade rounded density surface, including overlapping cuts',()=>{
   const cuts=[makeCut({x:12,y:0,z:12},8,3),makeCut({x:15,y:0,z:12},4,4)];
   const geometry=terrainChunk(cuts,0,0),p=geometry.attributes.position;

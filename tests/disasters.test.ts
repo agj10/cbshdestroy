@@ -42,6 +42,8 @@ function harness(parts: CampusPart[] = []) {
     getBurningParts: () => [],
     blast: record("blast"),
     heat: record("heat"),
+    igniteRemnants: record("igniteRemnants"),
+    mutate: record("mutate"),
     earthquake: record("earthquake"),
     water: record("water"),
     vortex: record("vortex"),
@@ -237,7 +239,8 @@ describe("disaster lifecycles", () => {
     director.launch("aliens", target, 3, { craftCount: 1, beam: 1.5 });
     expect(director.attackAliens({ x: -22, y: 0, z: 18 })).toBe(true);
     expect(calls.some((call) => call.method === "blast")).toBe(true);
-    expect(calls.some((call) => call.method === "heat")).toBe(true);
+    expect(calls.some((call) => call.method === "heat")).toBe(false);
+    expect(calls.some((call) => call.method === "mutate")).toBe(true);
     expect(scene.children).toHaveLength(4);
     expect(director.attackAliens({ x: -22, y: 0, z: 18 })).toBe(false);
     advance(director, 0.2);
@@ -558,7 +561,7 @@ describe("editable disaster settings", () => {
 });
 
 describe("disaster / Rapier integration", () => {
-  it("maximum default meteor breaks almost the entire school and casts structural debris beyond 100 m", async () => {
+  it("maximum default meteor leaves lower structure while throwing debris and limiting secondary fire", async () => {
     const campus = buildCampus();
     const sim = await PhysicsSimulation.create(campus.parts);
     simulations.push(sim);
@@ -592,7 +595,11 @@ describe("disaster / Rapier integration", () => {
     const detached = structural.filter(
       (part) => sim.getState(part.spec.id)!.detached,
     ).length;
-    expect(detached / structural.length).toBeGreaterThan(0.95);
+    expect(detached / structural.length).toBeGreaterThan(0.15);
+    expect(detached / structural.length).toBeLessThan(0.85);
+    const foundations = campus.parts.filter(part=>part.spec.anchored);
+    expect(foundations.filter(part=>!sim.getState(part.spec.id)!.detached).length).toBeGreaterThan(foundations.length*.5);
+    expect(sim.getBurningParts().length).toBeLessThan(20);
     expect(far.size).toBeGreaterThan(5);
   // More campus bodies require additional time for the same nine simulated seconds.
   }, 60_000);

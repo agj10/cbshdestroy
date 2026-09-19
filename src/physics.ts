@@ -147,6 +147,7 @@ export class PhysicsSimulation {
   private accumulator = 0;
   private supportClock = 0;
   private disposed = false;
+  private grab?: { record: PartRecord; offset: THREE.Vector3; target: THREE.Vector3 };
 
   private constructor(parts: CampusPart[]) {
     this.parts = parts;
@@ -305,6 +306,7 @@ export class PhysicsSimulation {
         const velocity = record.body.linvel();
         record.impactSpeed = Math.hypot(velocity.x, velocity.y, velocity.z);
       }
+      this.updateGrab();
       if (this.dynamicRecords.size > 0) this.world.step(this.events);
       this.processContacts();
       for (const record of this.dynamicRecords) this.boundMotion(record);
@@ -376,6 +378,35 @@ export class PhysicsSimulation {
       true,
     );
     this.dynamicRecords.add(record);
+  }
+
+  beginGrab(id: string, hit: Vec3): boolean {
+    const record = this.byId.get(id);
+    if (this.disposed || !record || !finiteVec(hit) || record.erosion >= 1) return false;
+    const center = record.body.translation();
+    const offset = new THREE.Vector3(hit.x-center.x,hit.y-center.y,hit.z-center.z)
+      .applyQuaternion(new THREE.Quaternion().copy(record.body.rotation()).invert());
+    this.damagePart(record,1);
+    this.grab = {record,offset,target:new THREE.Vector3().copy(hit)};
+    return true;
+  }
+  moveGrab(target: Vec3): void {
+    if (!this.grab || !finiteVec(target)) return;
+    this.grab.target.set(clamp(target.x,-500,500),clamp(target.y,.15,160),clamp(target.z,-500,500));
+  }
+  endGrab(): void { this.grab = undefined; }
+  private updateGrab(): void {
+    if (!this.grab) return;
+    const {record,offset,target}=this.grab;
+    if (record.erosion >= 1 || !record.body.isEnabled()) {this.endGrab();return;}
+    const position = record.body.translation();
+    const point = offset.clone().applyQuaternion(record.body.rotation()).add(new THREE.Vector3().copy(position));
+    const velocity=record.body.velocityAtPoint(point);
+    const impulse=target.clone().sub(point).multiplyScalar(85)
+      .add(new THREE.Vector3(-velocity.x*18,9.81-velocity.y*18,-velocity.z*18));
+    impulse.clampLength(0,160).multiplyScalar(record.mass*FIXED_DT);
+    record.body.applyImpulseAtPoint(impulse,point,true);
+    this.boundMotion(record);
   }
 
   /** Keep combined disasters within the CCD solver's supported speed range. */
@@ -489,7 +520,13 @@ export class PhysicsSimulation {
       if (edgeDistance >= radius) continue;
       const falloff = (1 - edgeDistance / radius) ** 1.3;
       const strength = MATERIALS[record.part.spec.kind].strength;
-      this.damagePart(record, (power * falloff) / (65 * strength));
+      // Ground anchorage resists shock; direct hits and repeated impacts can still break it.
+      const core = Math.max(0, 1 - edgeDistance / (radius * .32));
+      const structural = ["column", "wall", "slab", "roof"].includes(record.part.spec.kind);
+      const grounded = record.part.spec.anchored && record.startPosition.y - record.part.spec.size.y / 2 < .35;
+      const resistance = radius <= 2 || !structural ? 1 : grounded ? .025 + core * core * .15
+        : record.supports.length ? THREE.MathUtils.lerp(.38, 1, Math.min(1, Math.max(0, p.y) / 8)) : 1;
+      this.damagePart(record, (power * falloff * resistance) / (65 * strength));
       if (!record.detached) continue;
       const normalizer = Math.max(0.5, distance);
       const velocity = peakVelocity * falloff * impulseScale;
@@ -539,6 +576,19 @@ export class PhysicsSimulation {
         );
       }
     }
+  }
+
+  /** A few nearby, slow remnants ignite after an impact, instead of heating airborne debris. */
+  igniteRemnants(center: Vec3, radius: number, maximum = 5): void {
+    if (this.disposed || !finiteVec(center) || !Number.isFinite(radius) || radius <= 0) return;
+    const candidates = this.records.filter(record => {
+      if (record.erosion >= 1 || !["roof", "wood", "detail"].includes(record.part.spec.kind)) return false;
+      const p = record.body.translation(), velocity = record.body.linvel();
+      return Math.hypot(p.x-center.x, p.z-center.z) < radius && p.y < 18
+        && (!record.detached || Math.hypot(velocity.x, velocity.y, velocity.z) < 4);
+    }).sort((a,b) => stableHash(a.part.spec.id) - stableHash(b.part.spec.id));
+    for (const record of candidates.slice(0, Math.max(0, Math.floor(maximum))))
+      record.temperature = Math.max(record.temperature, 560 + stableHash(record.part.spec.id) * 130);
   }
 
   heat(center: Vec3, radius: number, amount: number): void {
@@ -684,8 +734,10 @@ export class PhysicsSimulation {
   }
 
   /** Replace excavated ground tiles with the same density surface used by rendering. */
-  deformGround(center: Vec3, radius: number, depth: number): void {
-    if(this.disposed || !finiteVec(center) || ![radius,depth].every(Number.isFinite)) return;
+  deformGround(center: Vec3, radius: number, depth: number): boolean {
+    if(this.disposed || !finiteVec(center) || ![radius,depth].every(Number.isFinite)) return false;
+    const cut=makeCut(center,radius,depth);
+    if(this.terrainCuts.some(old=>old.x===cut.x && old.z===cut.z && old.radius===cut.radius && old.depth>=cut.depth))return false;
     if(this.flatGround){
       this.world.removeCollider(this.flatGround,true);this.flatGround=undefined;
     for(let x=-10;x<10;x++) for(let z=-10;z<10;z++) {
@@ -696,7 +748,7 @@ export class PhysicsSimulation {
       this.world.createCollider(RAPIER.ColliderDesc.cuboid(sx,.5,sz).setTranslation(x,-.5,z));
 
     }
-    const cut=makeCut(center,radius,depth);this.terrainCuts.push(cut);
+    this.terrainCuts.push(cut);
     for(const [x,z] of affectedTiles(cut)) {
       const key=x+','+z, old=this.groundTiles.get(key);
       if(old)this.world.removeCollider(old,true);
@@ -713,6 +765,7 @@ export class PhysicsSimulation {
     }
     for(const record of this.dynamicRecords)record.body.wakeUp();
     this.terrainImpactCount++;
+    return true;
   }
 
   private updateThermal(dt: number): void {
@@ -998,6 +1051,7 @@ export class PhysicsSimulation {
 
   reset(): void {
     if (this.disposed) return;
+    this.endGrab();
     this.elapsed = 0;
     this.accumulator = 0;
     this.supportClock = 0;
@@ -1035,6 +1089,7 @@ export class PhysicsSimulation {
     this.world.free();
     this.dynamicRecords.clear();
     this.byCollider.clear();
+    this.endGrab();
     this.disposed = true;
   }
 }

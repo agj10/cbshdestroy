@@ -32,12 +32,12 @@ $("#app").innerHTML = `
       <section class="launch-panel">
         <div class="selection-heading"><span id="selected-icon">${icon("meteor", 22)}</span><div><h2 id="selected-name">운석 충돌</h2><span id="selected-english">METEOR IMPACT</span></div><span class="selection-index" id="selection-index">01</span></div>
         <p class="selection-description" id="selected-description"></p>
-        <div class="intensity-label"><label for="intensity">재난 강도</label><span class="intensity-number-wrap"><input type="number" class="number-input" id="intensity-number" min="1" max="${MAX_INTENSITY}" value="3" step="1" aria-label="재난 강도 숫자 입력" /><span>/ ${MAX_INTENSITY}</span></span></div>
-        <input type="range" id="intensity" min="1" max="${MAX_INTENSITY}" value="3" step="1" aria-label="재난 강도" />
+        <div class="intensity-label"><label for="intensity">재난 강도</label><span class="intensity-number-wrap"><input type="number" class="number-input" id="intensity-number" min="1" max="${MAX_INTENSITY}" value="5" step="1" aria-label="재난 강도 숫자 입력" /><span>/ ${MAX_INTENSITY}</span></span></div>
+        <input type="range" id="intensity" min="1" max="${MAX_INTENSITY}" value="5" step="1" aria-label="재난 강도" />
         <div class="intensity-presets" role="group" aria-label="재난 강도 프리셋">${[
-          [3, "보통"],
-          [10, "강력"],
-          [20, "극한"],
+          [5, "보통"],
+          [8, "강력"],
+          [10, "최대"],
         ]
           .map(
             ([value, label]) =>
@@ -52,8 +52,8 @@ $("#app").innerHTML = `
         <h2 id="direct-name">물리 파괴</h2><p id="direct-description" class="selection-description"></p>
         <label for="brush-radius">범위 <output id="brush-radius-value">6 m</output></label>
         <input id="brush-radius" type="range" min="1" max="30" step="1" value="6" />
-        <label for="brush-strength">강도 <output id="brush-strength-value">3</output></label>
-        <input id="brush-strength" type="range" min="1" max="20" step="1" value="3" />
+        <label for="brush-strength">강도 <output id="brush-strength-value">5</output></label>
+        <input id="brush-strength" type="range" min="1" max="10" step="1" value="5" />
         <button class="launch-button" id="direct-toggle" aria-pressed="false">직접 파괴 켜기</button>
         <p class="selection-description">켜면 클릭·드래그로 파괴해요. 끄거나 Esc를 누르면 화면을 다시 움직일 수 있어요.</p>
       </section>
@@ -80,11 +80,11 @@ $("#app").innerHTML = `
   </main>
   <footer class="transport"><div class="playback"><button id="pause-button" class="round-button" title="일시정지 (Space)" aria-label="일시정지">${icon("pause", 16)}</button><button id="reset-button" class="icon-button" title="캠퍼스 초기화 (R)" aria-label="캠퍼스 초기화">${icon("reset", 18)}</button><span class="transport-divider"></span><span class="clock-display" id="elapsed">00:00.0</span><span class="time-label">SIM TIME</span></div><div class="speed-controls" role="group" aria-label="시뮬레이션 속도"><span>재생 속도</span>${[0.25, 0.5, 1, 2].map((s) => `<button data-speed="${s}" class="speed-button ${s === 1 ? "active" : ""}">${s}×</button>`).join("")}</div><div class="footer-right"><span id="fps">60 FPS</span><button class="icon-button" id="sound-button" title="효과음 켜기" aria-label="효과음 켜기">${icon("mute", 18)}</button><button class="export-button" id="export-button">${icon("download", 16)}<span>3D 모델</span></button></div></footer>
   <dialog id="info-dialog"><button class="dialog-close icon-button" aria-label="닫기">${icon("close")}</button><span class="eyebrow">ABOUT THIS EXPERIMENT</span><h2>작은 캠퍼스, 커다란 실험.</h2><p>충북과학고등학교 사진을 바탕으로 만든 재난 샌드박스예요. 재난을 선택하고, 강도를 조절하고, 달라지는 캠퍼스를 자유롭게 관찰하세요.</p><div class="help-grid"><span>시점 회전</span><b>왼쪽 드래그 / 손가락 하나</b><span>화면 이동</span><b>오른쪽 드래그 / 손가락 둘</b><span>확대 · 축소</span><b>마우스 휠 / 핀치</b><span>직접 파괴</span><b>직접 파괴 카테고리 → 유형 선택 → 켜기</b><span>카메라 조작으로 복귀</span><b>직접 파괴 끄기 / Esc</b><span>실행 · 일시정지 · 초기화</span><b>Enter · Space · R</b></div><h3>모델과 물리에 관하여</h3><p>회색 외벽, 주황색 장식, 천문대 돔은 제공 사진을 반영했어요. 보이지 않는 뒷면과 별동, 운동장 세부 배치와 치수는 추정이에요. 2023년 현대화사업 이후 외관을 기준으로 삼았으며 2026년의 모든 변경을 확인한 실측 모델은 아니에요.</p><p>중력·충돌·마찰은 Rapier 물리 엔진으로, 구조 연결의 파손·열·물은 간략한 게임 모델로 계산해요. 실제 학교의 안전성이나 재난 피해를 예측하는 도구는 아니에요. 블랙홀·외계 침공·중력 반전은 가상 규칙을 사용해요.</p><p>3D 모델 버튼은 <b>현재 장면</b>을 GLB 파일로 저장해요. 온전한 모델은 초기화한 뒤 저장하세요.</p><a href="https://school.cbe.go.kr/cbs-h/M010202/" target="_blank" rel="noreferrer">학교 공식 연혁 ↗</a><a href="https://www.cbe.go.kr/news/na/ntt/selectNttInfo.do?mi=10301&nttSn=1517999" target="_blank" rel="noreferrer">공식 전경 참고자료 ↗</a></dialog>
-  <dialog id="settings-dialog"><button class="dialog-close icon-button" aria-label="닫기">${icon("close")}</button><span class="eyebrow">PREFERENCES</span><h2>나에게 맞는 실험실</h2><label class="setting-row">그래픽 품질<select id="quality"><option value="high">높음 · 부드러운 그림자</option><option value="low">낮음 · 성능 우선</option></select></label><label class="setting-row">충격 시 카메라 흔들림<input type="checkbox" id="shake" checked /></label><label class="setting-row">파손 먼지<input type="checkbox" id="dust-effects" checked /></label><p>느린 기기에서는 그래픽 품질과 재생 속도를 낮춰보세요. 여러 재난은 동시에 최대 4개까지 실행할 수 있어요.</p></dialog>
+  <dialog id="settings-dialog"><button class="dialog-close icon-button" aria-label="닫기">${icon("close")}</button><span class="eyebrow">PREFERENCES</span><h2>나에게 맞는 실험실</h2><label class="setting-row">그래픽 품질<select id="quality"><option value="high">높음 · 부드러운 그림자</option><option value="low">낮음 · 성능 우선</option></select></label><label class="setting-row">충격 시 카메라 흔들림<input type="checkbox" id="shake" checked /></label><label class="setting-row">파손 먼지<input type="checkbox" id="dust-effects" checked /></label><label class="setting-row">지면 굴착<input type="checkbox" id="terrain-effects" checked /></label><p>지면 굴착을 끄면 새 구덩이가 생기지 않아요. 기존 구덩이는 초기화하면 복원돼요.</p><p>느린 기기에서는 그래픽 품질과 재생 속도를 낮춰보세요. 여러 재난은 동시에 최대 4개까지 실행할 수 있어요.</p></dialog>
   <dialog id="disaster-settings-dialog" class="disaster-settings-dialog" aria-labelledby="detail-title" aria-describedby="detail-introduction">
     <div class="detail-header"><div><span class="eyebrow">DESIGN YOUR DISASTER</span><h2 id="detail-title">운석 충돌 세부 설정</h2><p id="detail-introduction">설정은 재난마다 따로 저장되며, 다음 실행부터 적용돼요.</p></div><button type="button" class="dialog-close icon-button" aria-label="세부 설정 닫기">${icon("close")}</button></div>
     <div class="detail-body">
-      <section class="detail-section" aria-labelledby="detail-parameters-heading"><div class="detail-section-heading"><h3 id="detail-parameters-heading">재난 특성</h3><span class="detail-section-tag">01 / PARAMETERS</span></div><p class="field-description parameter-introduction">아래 수치는 기본 강도 3을 기준으로 해요. 재난 강도를 높이면 여기에 추가로 힘과 범위가 적용돼요.</p><div class="parameter-grid" id="disaster-parameter-fields"></div></section>
+      <section class="detail-section" aria-labelledby="detail-parameters-heading"><div class="detail-section-heading"><h3 id="detail-parameters-heading">재난 특성</h3><span class="detail-section-tag">01 / PARAMETERS</span></div><p class="field-description parameter-introduction">아래 수치는 기본 강도 5를 기준으로 해요. 재난 강도를 높이면 여기에 추가로 힘과 범위가 적용돼요.</p><div class="parameter-grid" id="disaster-parameter-fields"></div></section>
       <section class="detail-section" aria-labelledby="detail-target-heading"><div class="detail-section-heading"><h3 id="detail-target-heading">발생 위치</h3><span class="detail-section-tag">02 / LOCATION</span></div><div class="target-coordinates">${[
         { axis: "x", label: "가로 X", min: -110, max: 110 },
         { axis: "y", label: "높이 Y", min: 0, max: 60 },
@@ -97,10 +97,10 @@ $("#app").innerHTML = `
         .join(
           "",
         )}</div><div class="target-presets"><button type="button" data-target-preset="main">본관 중앙</button><button type="button" data-target-preset="field">운동장</button><button type="button" id="detail-target-pick">${icon("target", 14)} 화면에서 지정</button></div><p class="field-description">장면의 가상 좌표예요. 높이는 지면 기준이며, m 표기는 모델의 추정 크기를 따라요.</p></section>
-      <section class="detail-section" aria-labelledby="detail-intensity-heading"><div class="detail-section-heading"><h3 id="detail-intensity-heading">재난 강도</h3><span class="detail-section-tag">03 / POWER</span></div><div class="detail-intensity-line"><span id="detail-intensity-name">보통</span><span class="intensity-number-wrap"><input type="number" class="number-input" id="detail-intensity-number" min="1" max="${MAX_INTENSITY}" step="1" value="3" aria-label="세부 설정 재난 강도 숫자 입력" /><span>/ ${MAX_INTENSITY}</span></span></div><input type="range" id="detail-intensity" min="1" max="${MAX_INTENSITY}" step="1" value="3" aria-label="세부 설정 재난 강도" /><div class="intensity-presets detail-presets" role="group" aria-label="세부 설정 재난 강도 프리셋">${[
-        [3, "보통"],
-        [10, "강력"],
-        [20, "극한"],
+      <section class="detail-section" aria-labelledby="detail-intensity-heading"><div class="detail-section-heading"><h3 id="detail-intensity-heading">재난 강도</h3><span class="detail-section-tag">03 / POWER</span></div><div class="detail-intensity-line"><span id="detail-intensity-name">보통</span><span class="intensity-number-wrap"><input type="number" class="number-input" id="detail-intensity-number" min="1" max="${MAX_INTENSITY}" step="1" value="5" aria-label="세부 설정 재난 강도 숫자 입력" /><span>/ ${MAX_INTENSITY}</span></span></div><input type="range" id="detail-intensity" min="1" max="${MAX_INTENSITY}" step="1" value="5" aria-label="세부 설정 재난 강도" /><div class="intensity-presets detail-presets" role="group" aria-label="세부 설정 재난 강도 프리셋">${[
+        [5, "보통"],
+        [8, "강력"],
+        [10, "최대"],
       ]
         .map(
           ([value, label]) =>
@@ -108,7 +108,7 @@ $("#app").innerHTML = `
         )
         .join(
           "",
-        )}</div><p class="field-description">1–5는 기존 범위, 6–20은 피해 범위와 힘을 크게 확장해요. 실제 재난 등급과 다른 게임용 강도예요.</p></section>
+        )}</div><p class="field-description">강도는 1–10이며 기본값은 5예요. 높은 강도에서도 충돌 지점과 구조에 따라 남는 부분이 달라져요. 실제 재난 등급과 다른 게임용 강도예요.</p></section>
     </div>
     <div class="detail-footer"><p id="detail-status" role="status" aria-live="polite">변경 내용은 자동으로 저장돼요.</p><div><button type="button" class="detail-reset" id="reset-disaster-settings">${icon("reset", 15)} 이 재난 설정 초기화</button><button type="button" class="launch-button" id="detail-launch-button" disabled>${icon("play", 16)}<span>이 설정으로 시작</span></button></div></div>
   </dialog>
@@ -153,7 +153,7 @@ function boundedNumber(
 }
 function defaultDraft(id: DisasterId): DisasterDraft {
   return {
-    intensity: 3,
+    intensity: 5,
     target: { x: 4, y: 8, z: -19.5 },
     settings: getDefaultSettings(id),
   };
@@ -179,7 +179,7 @@ function readDrafts(): Record<DisasterId, DisasterDraft> {
       const item = stored.drafts[id];
       if (!item || typeof item !== "object") continue;
       const draft = result[id];
-      draft.intensity = boundedNumber(item.intensity, 3, 1, MAX_INTENSITY, 1);
+      draft.intensity = stored.intensityScale === 10 ? boundedNumber(item.intensity, 5, 1, MAX_INTENSITY, 1) : 5;
       for (const axis of ["x", "y", "z"] as const) {
         draft.target[axis] = boundedNumber(
           item.target?.[axis],
@@ -217,7 +217,7 @@ function saveDrafts() {
   try {
     localStorage.setItem(
       DRAFT_STORAGE_KEY,
-      JSON.stringify({ version: 1, selected, drafts }),
+      JSON.stringify({ version: 1, intensityScale: 10, selected, drafts }),
     );
     storageAvailable = true;
   } catch {
@@ -238,7 +238,7 @@ function syncIntensity() {
     $<HTMLInputElement>(`#${id}`).value = String(value);
   }
   $("#detail-intensity-name").textContent =
-    value <= 5 ? "기본 범위" : value < 15 ? "강력한 재난" : "극한의 재난";
+    value <= 5 ? "기본 범위" : value < 10 ? "강력한 재난" : "최대 강도";
   document
     .querySelectorAll<HTMLButtonElement>("[data-intensity-preset]")
     .forEach((button) => {
@@ -364,7 +364,8 @@ function drawDisasters() {
       '<button class="disaster-tile '+(directTool===tool.id?'selected':'')+'" data-destruction="'+tool.id+'" aria-pressed="'+(directTool===tool.id)+'"><span class="tile-icon">'+icon(tool.icon,22)+'</span><span>'+tool.name+'</span></button>').join('');
     const tool=DESTRUCTION_TOOLS.find(tool=>tool.id===directTool)!;
     $("#direct-name").textContent=tool.name;$("#direct-description").textContent=tool.description;
-    document.querySelectorAll<HTMLButtonElement>('[data-destruction]').forEach(button=>button.onclick=()=>{directTool=button.dataset.destruction as DestructionTool;brushPoint=null;drawDisasters();});
+    for(const selector of ['#brush-radius','#brush-strength','label[for="brush-radius"]','label[for="brush-strength"]']) $(selector).hidden = directTool === "grab";
+    document.querySelectorAll<HTMLButtonElement>('[data-destruction]').forEach(button=>button.onclick=()=>{stopGrab();brushDragging=false;directTool=button.dataset.destruction as DestructionTool;brushPoint=null;drawDisasters();});
     return;
   }
   $("#disaster-grid").innerHTML = DISASTERS.filter(
@@ -450,7 +451,7 @@ document
       setTarget(
         button.dataset.targetPreset === "main"
           ? { x: 4, y: 8, z: -19.5 }
-          : { x: 0, y: 0, z: 35 },
+          : { x: 4, y: 0, z: 32 },
       );
   });
 for (const id of ["info", "settings", "disaster-settings"]) {
@@ -476,7 +477,7 @@ $("#settings-button").onclick = () =>
   $<HTMLDialogElement>("#settings-dialog").showModal();
 $("#info-dialog").insertAdjacentHTML(
   "beforeend",
-  "<h3>더 큰 재난, 더 세밀한 설정</h3><p>재난 강도는 1부터 20까지예요. 1–5는 기존 범위이며 6–20은 힘과 피해 범위를 크게 확장해요. 세부 설정에서 재난의 크기, 속도, 방향 등을 조절할 수 있어요. 설정은 재난마다 따로 유지되며 다음 실행부터 적용돼요. 멀리 퍼진 잔해는 넓게 보기 버튼으로 관찰하세요.</p>",
+  "<h3>더 큰 재난, 더 세밀한 설정</h3><p>재난 강도는 1부터 10까지이며 기본값은 5예요. 세부 설정에서 재난의 크기, 속도, 방향 등을 조절할 수 있어요. 설정은 재난마다 따로 유지되며 다음 실행부터 적용돼요. 멀리 퍼진 잔해는 넓게 보기 버튼으로 관찰하세요.</p>",
 );
 $("#disaster-settings-button").onclick = () => {
   renderDetails();
@@ -663,6 +664,16 @@ function setAiming(value: boolean) {
 $("#target-button").onclick = () => setAiming(!aiming);
 const raycaster = new THREE.Raycaster();
 let down = { x: 0, y: 0 };
+let grabPointer: number | null = null;
+const grabPlane = new THREE.Plane();
+const grabMeshes = new Map(campus.parts.map(part => [part.mesh, part.spec.id]));
+function stopGrab() {
+  if (ready) simulation.endGrab();
+  if (grabPointer !== null && renderer.domElement.hasPointerCapture(grabPointer)) renderer.domElement.releasePointerCapture(grabPointer);
+  grabPointer = null;
+  if (directModeEnabled) renderer.domElement.style.cursor = directTool === "grab" ? "grab" : "crosshair";
+}
+
 const pointerPoint = (event: PointerEvent) => {
   const r = renderer.domElement.getBoundingClientRect();
   raycaster.setFromCamera(
@@ -692,6 +703,7 @@ const canUseDirectMode = () =>
 function syncDirectMode() {
   const available = canUseDirectMode();
   if (!available && directModeEnabled) {
+    stopGrab();
     directModeEnabled = false;
     brushDragging = false;
     controls.enabled = true;
@@ -726,6 +738,7 @@ function syncDirectMode() {
   }
 }
 function setDirectMode(value: boolean) {
+  stopGrab();
   brushPoint = null;
   directModeEnabled = value && canUseDirectMode();
   brushDragging = false;
@@ -736,7 +749,7 @@ function setDirectMode(value: boolean) {
     targetMarker.visible =
       targetPreview && selected !== "earthquake" && selected !== "flood";
     $("#target-hint-message").textContent =
-      "직접 파괴 켜짐 · 왼쪽 클릭·드래그로 선택한 파괴를 적용해요";
+      directTool === "grab" ? "잡아 옮기기 · 물체를 끌고, 놓으면 떨어뜨려요" : "직접 파괴 켜짐 · 왼쪽 클릭·드래그로 선택한 파괴를 적용해요";
     $("#target-hint kbd").textContent = "Esc 끄기";
     $("#target-hint").hidden = false;
     renderer.domElement.style.cursor = "crosshair";
@@ -751,7 +764,7 @@ for(const field of ["radius","strength"]){
   input.oninput=()=>$('#brush-'+field+'-value').textContent=input.value+(field==='radius'?' m':'');
 }
 function applyBrush(){
-  if(!brushPoint || paused || !directModeEnabled)return;
+  if(!brushPoint || paused || !directModeEnabled || directTool === "grab")return;
   director.directDestruction(directTool,brushPoint,Number($<HTMLInputElement>('#brush-radius').value),Number($<HTMLInputElement>('#brush-strength').value),.12);
 }
 const updateBrushPoint = (event: PointerEvent) => {
@@ -760,6 +773,17 @@ const updateBrushPoint = (event: PointerEvent) => {
 renderer.domElement.addEventListener("pointerdown", (e) => {
   down = { x: e.clientX, y: e.clientY };
   if (directModeEnabled && canUseDirectMode() && e.button === 0) {
+    if (directTool === "grab") {
+      if (paused) {toast("재생 중에 조각을 잡아 옮길 수 있어요.");return;}
+      pointerPoint(e);
+      const hit = raycaster.intersectObjects(campus.parts.filter(part=>part.mesh.visible).map(part=>part.mesh),false)[0];
+      if (hit && simulation.beginGrab(grabMeshes.get(hit.object as THREE.Mesh)!,hit.point)) {
+        grabPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()),hit.point);
+        grabPointer=e.pointerId;renderer.domElement.setPointerCapture(e.pointerId);
+        renderer.domElement.style.cursor="grabbing";
+      }
+      e.preventDefault();return;
+    }
     brushDragging = true;
     renderer.domElement.setPointerCapture?.(e.pointerId);
     updateBrushPoint(e);
@@ -768,12 +792,20 @@ renderer.domElement.addEventListener("pointerdown", (e) => {
   }
 });
 renderer.domElement.addEventListener("pointermove", (e) => {
+  if (grabPointer === e.pointerId) {
+    const r=renderer.domElement.getBoundingClientRect();
+    raycaster.setFromCamera(new THREE.Vector2((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1),camera);
+    const target=raycaster.ray.intersectPlane(grabPlane,new THREE.Vector3());
+    if (target) simulation.moveGrab(target);
+    e.preventDefault();return;
+  }
   if (brushDragging) {
     updateBrushPoint(e);
     e.preventDefault();
   }
 });
 renderer.domElement.addEventListener("pointerup", (e) => {
+  if(grabPointer===e.pointerId){stopGrab();return;}
   if (brushDragging) {
     brushDragging = false;
     brushPoint = null;
@@ -792,13 +824,17 @@ renderer.domElement.addEventListener("pointerup", (e) => {
   toast("재난 위치를 지정했어요.");
 });
 renderer.domElement.addEventListener("pointercancel", () => {
+  stopGrab();
   brushDragging = false;
   brushPoint = null;
   if (directModeEnabled) return;
   controls.enabled = true;
 });
+renderer.domElement.addEventListener("lostpointercapture", () => {if(grabPointer!==null)stopGrab();});
+window.addEventListener("blur",()=>{stopGrab();brushDragging=false;brushPoint=null;});
 function setPause(value: boolean) {
   if (!ready) return;
+  if (value) stopGrab();
   paused = value;
   $("#pause-button").innerHTML = icon(paused ? "play" : "pause", 16);
   $("#pause-button").setAttribute("aria-label", paused ? "재생" : "일시정지");
@@ -936,10 +972,17 @@ $("#export-button").onclick = async () => {
     setPause(wasPaused);
   }
 };
+const terrainSetting = $<HTMLInputElement>("#terrain-effects");
+try { terrainSetting.checked = localStorage.getItem("cbsh-terrain-effects") !== "false"; } catch {}
+terrainSetting.onchange = () => {
+  if (ready) director.terrainEnabled = terrainSetting.checked;
+  try { localStorage.setItem("cbsh-terrain-effects", String(terrainSetting.checked)); } catch {}
+};
 const dustSetting=$<HTMLInputElement>("#dust-effects");
 try { dustSetting.checked=localStorage.getItem("cbsh-fracture-dust") !== "false"; } catch {}
 dustSetting.onchange=()=>{
   if(ready)director.setDustEnabled(dustSetting.checked);
+    director.terrainEnabled = terrainSetting.checked;
   try { localStorage.setItem("cbsh-fracture-dust",String(dustSetting.checked)); } catch {}
 };
 $<HTMLSelectElement>("#quality").onchange = () => {

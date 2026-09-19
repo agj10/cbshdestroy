@@ -18,13 +18,13 @@ export function smokeTexture(): THREE.DataTexture {
   texture.magFilter=THREE.LinearFilter;texture.minFilter=THREE.LinearFilter;return texture;
 }
 
-export function stylizedFlameGeometry(height:number,width:number):THREE.BufferGeometry {
+export function stylizedFlameGeometry(height:number,width:number,variant=.5):THREE.BufferGeometry {
   const positions:number[]=[],colors:number[]=[];
-  const rings=[[0,.5],[.2,1],[.52,.65],[.8,.24],[1,0]];
+  const rings=[[0,.5],[.16+variant*.12,1],[.48+variant*.12,.55+variant*.2],[.78,.16+variant*.18],[1,0]];
   for(let ring=0;ring<4;ring++)for(let side=0;side<5;side++){
     const vertex=(r:number,k:number)=>{
-      const [y,radius]=rings[r],angle=k/5*Math.PI*2;
-      return [Math.cos(angle)*radius*width+y*y*width*.6,y*height,Math.sin(angle)*radius*width];
+      const [y,radius]=rings[r],angle=k/5*Math.PI*2+variant*2;
+      return [Math.cos(angle)*radius*width+y*y*width*(variant*1.6-.5),y*height,Math.sin(angle)*radius*width];
     };
     for(const [r,k] of [[ring,side],[ring,side+1],[ring+1,side],[ring+1,side],[ring,side+1],[ring+1,side+1]]){
       positions.push(...vertex(r,k));

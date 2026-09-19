@@ -21,6 +21,8 @@ export class VoxelTerrain {
   get craterCount(){return this.cuts.length;}
   heightAt(x:number,z:number){return terrainHeight(this.cuts,x,z);}
   bindSurface(mesh:THREE.Mesh){
+    // The removed flat cover must not keep casting an uncut shadow across the cavity.
+    mesh.castShadow=false;
     const originals=Array.isArray(mesh.material)?mesh.material:[mesh.material];
     const materials=originals.map(original=>{
       const material=original.clone();
@@ -44,15 +46,21 @@ export class VoxelTerrain {
   }
   impact(center:Vec3,radius:number,depth:number,_source:string){
     if(![center.x,center.y,center.z,radius,depth].every(Number.isFinite))return;
-    const cut=makeCut(center,radius,depth);this.cuts.push(cut);
+    const cut=makeCut(center,radius,depth);
+    if(this.cuts.some(old=>old.x===cut.x && old.z===cut.z && old.radius===cut.radius && old.depth>=cut.depth))return;
+    this.cuts.push(cut);
     for(const [x,z] of affectedTiles(cut)){
       const key=`${x},${z}`,old=this.chunks.get(key);if(old){old.geometry.dispose();old.removeFromParent();}
       const mesh=new THREE.Mesh(terrainChunk(this.cuts,x,z),this.material);
-      mesh.receiveShadow=true;mesh.castShadow=false;
+      mesh.receiveShadow=true;mesh.castShadow=true;
       // Discard unexcavated parts of the tile so the field markings remain visible.
       this.chunks.set(key,mesh);this.group.add(mesh);
     }
-    for(let z=0;z<512;z++)for(let x=0;x<512;x++)this.heights[x+z*512]=this.heightAt((x+.5)/512*480-240,(z+.5)/512*480-240);
+    const pixel=(v:number)=>Math.max(0,Math.min(511,Math.floor((v+240)/480*512)));
+    const minX=pixel(cut.x-cut.radius)-1,maxX=pixel(cut.x+cut.radius)+1;
+    const minZ=pixel(cut.z-cut.radius)-1,maxZ=pixel(cut.z+cut.radius)+1;
+    for(let z=Math.max(0,minZ);z<=Math.min(511,maxZ);z++)for(let x=Math.max(0,minX);x<=Math.min(511,maxX);x++)
+      this.heights[x+z*512]=Math.min(this.heights[x+z*512],terrainHeight([cut],(x+.5)/512*480-240,(z+.5)/512*480-240));
     this.mask.needsUpdate=true;
   }
   clear(){for(const mesh of this.chunks.values()){mesh.geometry.dispose();mesh.removeFromParent();}this.chunks.clear();this.cuts=[];this.heights.fill(0);this.mask.needsUpdate=true;}

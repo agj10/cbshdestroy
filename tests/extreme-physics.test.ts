@@ -83,7 +83,7 @@ afterEach(() => {
 });
 
 describe("extreme disaster physics", () => {
-  it("breaks the entire campus and scatters structural debris beyond 100 metres", async () => {
+  it("releases extensive debris but leaves foundation remnants under a broad blast", async () => {
     const { campus, simulation } = await campusSimulation();
     const structural = campus.parts.filter(({ spec }) =>
       ["slab", "wall", "column", "roof"].includes(spec.kind),
@@ -92,7 +92,8 @@ describe("extreme disaster physics", () => {
     const detached = structural.filter(
       ({ spec }) => simulation.getState(spec.id)!.detached,
     );
-    expect(detached.length / structural.length).toBeGreaterThan(0.95);
+    expect(detached.length / structural.length).toBeGreaterThan(0.65);
+    expect(structural.some(({spec})=>spec.anchored && !simulation.getState(spec.id)!.detached)).toBe(true);
     let farthest = 0;
     let farTravel = 0;
     for (let second = 0; second < 8; second++) {

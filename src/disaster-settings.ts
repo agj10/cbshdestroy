@@ -1,7 +1,7 @@
 import type { DisasterId } from "./disasters";
 
-export const MAX_INTENSITY = 20;
-export const DEFAULT_INTENSITY = 3;
+export const MAX_INTENSITY = 10;
+export const DEFAULT_INTENSITY = 5;
 export type DisasterSettings = Record<string, number | string>;
 export interface RangeSetting {
   type: "range";
@@ -724,10 +724,10 @@ export function normalizeSettings(
   return result;
 }
 
-/** Keep the original 1–5 range, then smoothly grow to 12× authored effect gain at level 20. */
+/** A bounded 1–10 scale: the upper half adds impact without clearing the entire campus. */
 export function intensityGain(intensity: number): number {
   const value = Number.isFinite(intensity)
     ? Math.max(1, Math.min(MAX_INTENSITY, intensity))
     : DEFAULT_INTENSITY;
-  return 1 + 11 * Math.pow(Math.max(0, value - 5) / 15, 1.6);
+  return 1 + 1.4 * Math.pow(Math.max(0, value - 5) / 5, 1.35);
 }

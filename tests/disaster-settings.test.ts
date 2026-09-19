@@ -73,12 +73,12 @@ describe("disaster parameter boundaries", () => {
   });
 
   it("preserves the original five levels and grows monotonically to a bounded extreme range", () => {
-    expect(MAX_INTENSITY).toBe(20);
+    expect(MAX_INTENSITY).toBe(10);
     for (let i = 1; i <= 5; i++) expect(intensityGain(i)).toBe(1);
     for (let i = 6; i <= MAX_INTENSITY; i++)
       expect(intensityGain(i)).toBeGreaterThan(intensityGain(i - 1));
-    expect(intensityGain(20)).toBe(12);
-    expect(intensityGain(999)).toBe(12);
+    expect(intensityGain(20)).toBeCloseTo(2.4);
+    expect(intensityGain(999)).toBeCloseTo(2.4);
     expect(intensityGain(-99)).toBe(1);
     expect(Number.isFinite(intensityGain(NaN))).toBe(true);
   });
